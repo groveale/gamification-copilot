@@ -32,6 +32,12 @@ namespace groveale.Services
         Task<string?> GetStartDate(string timeFrame);
         Task<List<string>> GetUsersWhoHaveCompletedActivityForApp(string app, string? dayCount, string? interactionCount, string timeFrame, string? startDate);
         Task<List<InactiveUser>> GetInactiveUsers(int days);
+
+        // User Seeding
+        Task SeedMonthlyTimeFrameActivitiesAsync(List<CopilotTimeFrameUsage> userActivitiesSeed, string startDate);
+        Task SeedWeeklyTimeFrameActivitiesAsync(List<CopilotTimeFrameUsage> userActivitiesSeed, string startDate);
+        Task SeedAllTimeActivityAsync(List<CopilotTimeFrameUsage> userActivitiesSeed);
+        Task SeedInactiveUsersAsync(List<InactiveUser> inactiveUsersSeed);
     }
 
     public class AzureTableService : IAzureTableService
@@ -1521,6 +1527,92 @@ namespace groveale.Services
             return users;
         }
 
+        #endregion
+
+        #region User Seeding
+        public async Task SeedMonthlyTimeFrameActivitiesAsync(List<CopilotTimeFrameUsage> userActivitiesSeed, string startDate)
+        {
+            // Get daily table
+            foreach (var userEntity in userActivitiesSeed)
+            {
+                try
+                {
+                    // Try to add the entity if it doesn't exist
+                    await _userMonthlyTableClient.AddEntityAsync(userEntity.ToTimeFrameTableEntity(startDate));
+                    _logger.LogInformation($"Added monthly seed entity for {userEntity.UPN}");
+                }
+                catch (Azure.RequestFailedException ex) when (ex.Status == 409) // Conflict indicates the entity already exists
+                {
+                    // Merge the entity if it already exists
+                    await _userMonthlyTableClient.UpdateEntityAsync(userEntity.ToTimeFrameTableEntity(startDate), ETag.All, TableUpdateMode.Merge);
+                }
+            }
+        }
+
+        public async Task SeedWeeklyTimeFrameActivitiesAsync(List<CopilotTimeFrameUsage> userActivitiesSeed, string startDate)
+        {
+            // Get daily table
+            foreach (var userEntity in userActivitiesSeed)
+            {
+                try
+                {
+                    // Try to add the entity if it doesn't exist
+                    await _userWeeklyTableClient.AddEntityAsync(userEntity.ToTimeFrameTableEntity(startDate));
+                    _logger.LogInformation($"Added weekly seed entity for {userEntity.UPN}");
+                }
+                catch (Azure.RequestFailedException ex) when (ex.Status == 409) // Conflict indicates the entity already exists
+                {
+                    // Merge the entity if it already exists
+                    await _userWeeklyTableClient.UpdateEntityAsync(userEntity.ToTimeFrameTableEntity(startDate), ETag.All, TableUpdateMode.Merge);
+                }
+            }
+        }
+
+        public async Task SeedAllTimeActivityAsync(List<CopilotTimeFrameUsage> userActivitiesSeed)
+        {
+            // Get daily table
+            foreach (var userEntity in userActivitiesSeed)
+            {
+                try
+                {
+                    // Try to add the entity if it doesn't exist
+                    await _userAllTimeTableClient.AddEntityAsync(userEntity.ToAllTimeTableEntity());
+                    _logger.LogInformation($"Added alltime seed entity for {userEntity.UPN}");
+                }
+                catch (Azure.RequestFailedException ex) when (ex.Status == 409) // Conflict indicates the entity already exists
+                {
+                    // Merge the entity if it already exists
+                    await _userAllTimeTableClient.UpdateEntityAsync(userEntity.ToAllTimeTableEntity(), ETag.All, TableUpdateMode.Merge);
+                }
+            }
+        }
+
+        public async Task SeedInactiveUsersAsync(List<InactiveUser> userActivitiesSeed)
+        {
+            // Get daily table
+            foreach (var userEntity in userActivitiesSeed)
+            {
+                // Add user record
+                var tableEntity = new TableEntity(userEntity.UPN, userEntity.LastActivityDate.ToString("yyyy-MM-dd"))
+                {
+                    { "DaysSinceLastActivity", userEntity.DaysSinceLastActivity },
+                    { "LastActivityDate", userEntity.LastActivityDate },
+                    { "DisplayName", userEntity.DisplayName }
+                };
+
+                try
+                {
+                    // Try to add the entity if it doesn't exist
+                    await _userLastUsageTableClient.AddEntityAsync(tableEntity);
+                    _logger.LogInformation($"Added inactive seed entity for {userEntity.UPN}");
+                }
+                catch (Azure.RequestFailedException ex) when (ex.Status == 409) // Conflict indicates the entity already exists
+                {
+                    // Merge the entity if it already exists
+                    await _userLastUsageTableClient.UpdateEntityAsync(tableEntity, ETag.All, TableUpdateMode.Merge);
+                }
+            }
+        }
         #endregion
     }
 

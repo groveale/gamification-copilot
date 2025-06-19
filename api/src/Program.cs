@@ -31,6 +31,9 @@ var host = new HostBuilder()
         // Register the GraphService
         services.AddSingleton<IGraphService, GraphService>();
 
+        // Register the UserSeedervice
+        services.AddSingleton<IUserActivitySeeder, UserActivitySeeder>();
+
     })
     .Build();
 
