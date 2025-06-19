@@ -28,6 +28,10 @@ namespace groveale.Services
 
         // from other fucntion
         Task<int> ProcessUserDailySnapshots(List<M365CopilotUsage> siteSnapshots, DeterministicEncryptionService encryptionService);
+        Task<List<string>> GetUsersWithStreakForApp(string app, int count);
+        Task<string?> GetStartDate(string timeFrame);
+        Task<List<string>> GetUsersWhoHaveCompletedActivityForApp(string app, string? dayCount, string? interactionCount, string timeFrame, string? startDate);
+        Task<List<InactiveUser>> GetInactiveUsers(int days);
     }
 
     public class AzureTableService : IAzureTableService
@@ -49,8 +53,8 @@ namespace groveale.Services
         private readonly string _agentMonthlyByUserTableName = "AgentUsageMonthlyByUserSnapshots";
         private readonly string _userAllTimeTableName = "CopilotUsageAllTimeRecord";
         private readonly string _agentAllTimeTableName = "AgentUsageAllTimeRecord";
-         private readonly string _agentAllTimeByUserTableName = "AgentUsageAllTimeByUserRecord";
-         private readonly string _userLastUsageTableName = "UsersLastUsageTracker";
+        private readonly string _agentAllTimeByUserTableName = "AgentUsageAllTimeByUserRecord";
+        private readonly string _userLastUsageTableName = "UsersLastUsageTracker";
         private readonly TableClient copilotInteractionDetailsTableClient;
         private readonly TableClient copilotInteractionDailyAggregationsTableClient;
         private readonly TableClient copilotAgentInteractionTableClient;
@@ -1385,6 +1389,136 @@ namespace groveale.Services
                     Console.WriteLine($"Error updating records: {ex.Message}");
                 }
             }
+        }
+
+        public async Task<List<string>> GetUsersWithStreakForApp(string app, int count)
+        {
+            // users
+            var users = new List<string>();
+
+            // build the query filter
+            string filter = $"PartitionKey eq '{CopilotTimeFrameUsage.AllTimePartitionKeyPrefix}-{app}' and CurrentDailyStreak ge {count}";
+
+            _logger.LogInformation($"Filter: {filter}");
+
+            try
+            {
+                var queryResults = _userAllTimeTableClient.QueryAsync<TableEntity>(filter);
+
+                await foreach (TableEntity entity in queryResults)
+                {
+                    users.Add(entity.RowKey);
+                }
+            }
+            catch (RequestFailedException ex)
+            {
+                Console.WriteLine($"Error retrieving records: {ex.Message}");
+
+            }
+
+            return users;
+        }
+
+        public async Task<string?> GetStartDate(string timeFrame)
+        {
+            // Get the report refresh date for the timeFrame
+            try
+            {
+                var existingTableEntity = await _reportRefreshDateTableClient.GetEntityAsync<TableEntity>("ReportRefreshDate", timeFrame);
+                return existingTableEntity.Value["StartDate"].ToString();
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404)
+            {
+                // Entity not found - nothing to do
+                return null;
+            }
+        }
+
+        public async Task<List<string>> GetUsersWhoHaveCompletedActivityForApp(string app, string? dayCount, string? interactionCount, string timeFrame, string date)
+        {
+            // switch statement to get the correct table on timeFrame
+            var tableClient = timeFrame.ToLowerInvariant() switch
+            {
+                "weekly" => _userWeeklyTableClient,
+                "monthly" => _userMonthlyTableClient,
+                "alltime" => _userAllTimeTableClient,
+                _ => throw new ArgumentException("Invalid timeFrame")
+            };
+
+            if (timeFrame.ToLowerInvariant() == "alltime")
+            {
+                date = CopilotTimeFrameUsage.AllTimePartitionKeyPrefix;
+            }
+
+            // Define the query filter 
+            string filter = $"PartitionKey eq '{date}-{app}'";
+
+            if (!string.IsNullOrEmpty(dayCount))
+            {
+                filter += $" and TotalDailyActivityCount ge {dayCount}";
+            }
+
+            if (!string.IsNullOrEmpty(interactionCount))
+            {
+                filter += $" and TotalInteractionCount ge {interactionCount}";
+            }
+
+            // log the filter
+            _logger.LogInformation($"Filter for {timeFrame}: {filter}");
+
+            // Get the users
+            var users = new List<string>();
+            try
+            {
+                // Query all records with filter
+                AsyncPageable<TableEntity> queryResults = tableClient.QueryAsync<TableEntity>(filter);
+
+                await foreach (TableEntity entity in queryResults)
+                {
+                    users.Add(entity.RowKey);
+                }
+            }
+            catch (RequestFailedException ex)
+            {
+                Console.WriteLine($"Error retrieving records: {ex.Message}");
+            }
+
+            return users;
+
+        }
+
+        // Todo, architect a better storage logic, query is not efficient
+        public async Task<List<InactiveUser>> GetInactiveUsers(int days)
+        {
+            // query to find user with more than days inactivity
+            string filter = TableClient.CreateQueryFilter($"DaysSinceLastActivity eq {days}");
+
+            // Get the users
+            var users = new List<InactiveUser>();
+
+            _logger.LogInformation($"Filter: {filter}");
+
+            try
+            {
+                var queryResults = _userLastUsageTableClient.QueryAsync<TableEntity>(filter);
+
+                await foreach (TableEntity entity in queryResults)
+                {
+
+                    users.Add(new InactiveUser
+                    {
+                        UPN = entity.PartitionKey,
+                        DaysSinceLastActivity = entity.GetDouble("DaysSinceLastActivity") ?? 0,
+                    });
+                }
+            }
+            catch (RequestFailedException ex)
+            {
+                Console.WriteLine($"Error retrieving records: {ex.Message}");
+
+            }
+
+            return users;
         }
 
         #endregion
