@@ -1,5 +1,6 @@
 using Azure;
 using Azure.Data.Tables;
+using Azure.Identity;
 using groveale.Models;
 using Microsoft.Extensions.Logging;
 using System;
@@ -86,7 +87,7 @@ namespace groveale.Services
         {
             _serviceClient = new TableServiceClient(
                 new Uri(settingsService.StorageAccountUri),
-                new TableSharedKeyCredential(settingsService.StorageAccountName, settingsService.StorageAccountKey));
+                new DefaultAzureCredential());
 
             _logger = logger;
 

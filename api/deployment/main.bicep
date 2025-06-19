@@ -183,8 +183,8 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
           value: '~3'
         }
         {
-          name: 'AzureWebJobsStorage'
-          value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};EndpointSuffix=core.windows.net;AccountKey=${storageAccount.listKeys().keys[0].value}'
+          name: 'AzureWebJobsStorage__accountName'
+          value: storageAccount.name
         }
         {
           name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING'
@@ -221,10 +221,6 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
         {
           name: 'StorageAccountName'
           value: storageAccount.name
-        }
-        {
-          name: 'StorageAccountKey'
-          value: storageAccount.listKeys().keys[0].value
         }
         {
           name: 'StorageAccountUri'
@@ -272,6 +268,9 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
 
 var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+var storageTableDataContributorRoleId = '0a9a7e1f-b8c7-4b9d-bc39-58b6a2430699'
+var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
+
 
 resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableManagedIdentity) {
   name: guid(keyVault.id, functionApp.id, keyVaultSecretsUserRoleId)
@@ -288,6 +287,26 @@ resource storageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-
   scope: storageAccount
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource storageTableRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableManagedIdentity) {
+  name: guid(storageAccount.id, functionApp.id, storageTableDataContributorRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageTableDataContributorRoleId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource storageQueueRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableManagedIdentity) {
+  name: guid(storageAccount.id, functionApp.id, storageQueueDataContributorRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageQueueDataContributorRoleId)
     principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
