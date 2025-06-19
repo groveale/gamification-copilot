@@ -68,6 +68,9 @@ param enableAppInsights bool = true
 @description('App Insights location (defaults to function app location)')
 param appInsightsLocation string = location
 
+@description('Inactive days for the function app settings')
+param inactiveDays string
+
 var storageAccountName = 'store${applicationName}'
 var appServicePlanName = 'asp-${applicationName}'
 var keyVaultName = 'kv-${applicationName}'
@@ -246,6 +249,10 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
         {
           name: 'SPO:ListId'
           value: spoListId
+        }
+        {
+          name: 'ReminderDays'
+          value: inactiveDays
         }
       ]
       ftpsState: 'FtpsOnly'

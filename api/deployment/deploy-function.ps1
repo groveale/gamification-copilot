@@ -12,7 +12,8 @@ param(
     [string]$TenantId = "<your-tenant-id>",
     [string]$AuthGuid = "<your-auth-guid>",
     [string]$SPO_SiteId = "<your-spo-site-id>",
-    [string]$SPO_ListId = "<your-spo-list-id>"
+    [string]$SPO_ListId = "<your-spo-list-id>",
+    [string]$InactivityDays = 14 # Optional, default is 14 days
 )
 
 # Function to write colored output
