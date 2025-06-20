@@ -14,11 +14,11 @@ namespace groveale
         private readonly IAzureTableService _azureTableService;
         private readonly IKeyVaultService _keyVaultService;
 
-        public GetUsersWhoHaveCompletedActivity(ILogger<GetUsersWhoHaveCompletedActivity> logger, ISettingsService settingsService, IAzureTableService _azureTableService, IKeyVaultService keyVaultService)
+        public GetUsersWhoHaveCompletedActivity(ILogger<GetUsersWhoHaveCompletedActivity> logger, ISettingsService settingsService, IAzureTableService azureTableService, IKeyVaultService keyVaultService)
         {
             _logger = logger;
             _settingsService = settingsService;
-            _azureTableService = _azureTableService;
+            _azureTableService = azureTableService;
             _keyVaultService = keyVaultService;
         }
 

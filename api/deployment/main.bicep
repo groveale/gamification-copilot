@@ -10,12 +10,8 @@ param runtime string = 'dotnet-isolated'
 param storageAccountType string = 'Standard_LRS'
 
 @description('App Service Plan SKU')
-@allowed(['Y1', 'EP1', 'EP2', 'EP3', 'P1v2', 'P2v2', 'P3v2'])
-param appServicePlanSku string = 'Y1'
-
-@description('Environment name (dev, test, prod)')
-@allowed(['dev', 'test', 'prod'])
-param environment string = 'dev'
+@allowed(['Y1', 'B1', 'EP1', 'EP2', 'EP3', 'P1v2', 'P2v2', 'P3v2'])
+param appServicePlanSku string = 'B1'
 
 @description('Application name for resource naming')
 param applicationName string
@@ -51,7 +47,6 @@ param spoListId string
 
 @description('Tags to apply to all resources')
 param tags object = {
-  Environment: environment
   Application: applicationName
   ManagedBy: 'Bicep'
 }
@@ -69,7 +64,7 @@ param enableAppInsights bool = true
 param appInsightsLocation string = location
 
 @description('Inactive days for the function app settings')
-param inactiveDays string
+param inactivityDays string
 
 var storageAccountName = 'store${applicationName}'
 var appServicePlanName = 'asp-${applicationName}'
@@ -157,15 +152,17 @@ resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
   }
 }
 
+// Add these variables to generate the connection strings
+var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storageAccount.listKeys().keys[0].value}'
+
+
 resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
   name: functionAppName
   location: location
   tags: tags
   kind: 'functionapp'
   dependsOn: enableAppInsights ? [appInsights] : []
-  identity: enableManagedIdentity ? {
-    type: 'SystemAssigned'
-  } : null
+  identity: { type: 'SystemAssigned' }
   properties: {
     serverFarmId: appServicePlan.id
     siteConfig: {
@@ -182,13 +179,30 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
           name: 'ApplicationInsightsAgent_EXTENSION_VERSION'
           value: '~3'
         }
+        // Add these required connection strings for Consumption plan
+        {
+          name: 'AzureWebJobsStorage'
+          value: storageConnectionString
+        }
+        {
+          name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING'
+          value: storageConnectionString
+        }
+        {
+          name: 'AzureWebJobsStorage__credential'
+          value: 'managedidentity'
+        }
         {
           name: 'AzureWebJobsStorage__accountName'
           value: storageAccount.name
         }
         {
-          name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING'
-          value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};EndpointSuffix=core.windows.net;AccountKey=${storageAccount.listKeys().keys[0].value}'
+          name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING__credential'
+          value: 'managedidentity'
+        }
+        {
+          name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING__accountName'
+          value: storageAccount.name
         }
         {
           name: 'WEBSITE_CONTENTSHARE'
@@ -205,10 +219,6 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
         {
           name: 'WEBSITE_RUN_FROM_PACKAGE'
           value: '1'
-        }
-        {
-          name: 'ENVIRONMENT'
-          value: environment
         }
         {
           name: 'tenantId'
@@ -248,7 +258,7 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
         }
         {
           name: 'ReminderDays'
-          value: inactiveDays
+          value: inactivityDays
         }
       ]
       ftpsState: 'FtpsOnly'
@@ -268,9 +278,8 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
 
 var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
-var storageTableDataContributorRoleId = '0a9a7e1f-b8c7-4b9d-bc39-58b6a2430699'
+var storageTableDataContributorRoleId = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
 var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
-
 
 resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableManagedIdentity) {
   name: guid(keyVault.id, functionApp.id, keyVaultSecretsUserRoleId)
@@ -286,7 +295,10 @@ resource storageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-
   name: guid(storageAccount.id, functionApp.id, storageBlobDataContributorRoleId)
   scope: storageAccount
   properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId)
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      storageBlobDataContributorRoleId
+    )
     principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
@@ -296,7 +308,10 @@ resource storageTableRoleAssignment 'Microsoft.Authorization/roleAssignments@202
   name: guid(storageAccount.id, functionApp.id, storageTableDataContributorRoleId)
   scope: storageAccount
   properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageTableDataContributorRoleId)
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      storageTableDataContributorRoleId
+    )
     principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
@@ -306,7 +321,10 @@ resource storageQueueRoleAssignment 'Microsoft.Authorization/roleAssignments@202
   name: guid(storageAccount.id, functionApp.id, storageQueueDataContributorRoleId)
   scope: storageAccount
   properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageQueueDataContributorRoleId)
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      storageQueueDataContributorRoleId
+    )
     principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }

@@ -1,4 +1,4 @@
-# Azure Function Deployment Script with func publish
+# Azure Function Deployment Script
 # Save as: deploy-function.ps1
 
 param(
@@ -68,28 +68,12 @@ try {
         exit 1
     }
 
-    # Check if Azure Functions Core Tools is installed
-    try {
-        func --version | Out-Null
-    }
-    catch {
-        Write-Error "Azure Functions Core Tools is not installed or not in PATH. Please install it using: npm install -g azure-functions-core-tools@4 --unsafe-perm true"
-        exit 1
-    }
-
     # Check if .NET CLI is installed
     try {
         dotnet --version | Out-Null
     }
     catch {
         Write-Error ".NET CLI is not installed or not in PATH"
-        exit 1
-    }
-
-    # Verify host.json exists (required for func publish)
-    $hostJsonPath = Join-Path $SourceCodePath "host.json"
-    if (-not (Test-Path $hostJsonPath)) {
-        Write-Error "host.json not found in source directory: $SourceCodePath. This is required for func publish."
         exit 1
     }
 
@@ -149,7 +133,9 @@ try {
     # Managed identity details
     $managedIdentityObjectId = $deploymentOutput.functionAppPrincipalId.value
 
+
     # Connect to Graph
+
     try {
         # Connect to Microsoft Graph - as a global admin or with sufficient permissions
         Write-Step "Connecting to Microsoft Graph..."
@@ -167,6 +153,7 @@ try {
       
         $displayName = $deployedFunctionName
         $siteId = $SPO_SiteId                          # Format: "yourtenant.sharepoint.com,site-guid,web-guid"
+
 
         $existingAssignments = Get-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $principalId
 
@@ -191,6 +178,7 @@ try {
                 -AppRoleId $activityFeedRole.Id
         }
 
+
         ### 2. Assign Sites.Selected from Microsoft Graph ###
         $graphAppId = "00000003-0000-0000-c000-000000000000"
         $graphSp = Get-MgServicePrincipal -Filter "appId eq '$graphAppId'"
@@ -204,6 +192,7 @@ try {
                 -AppRoleId $sitesSelectedRole.Id
         }
         
+
         # Assign ReportSettings.ReadWrite.All
         $reportSettingsRole = $graphSp.AppRoles | Where-Object {
             $_.Value -eq "ReportSettings.ReadWrite.All" -and $_.AllowedMemberTypes -contains "Application"
@@ -226,6 +215,7 @@ try {
                 -AppRoleId $reportsReadAllRole.Id
         }
 
+
         ### 3. Grant SharePoint permission using Sites.Selected model ###
         $permissionBody = @{
             roles               = @("read")  # or "write"
@@ -246,19 +236,16 @@ try {
         exit 1
     }
 
+
     Write-Status "Managed identity permissions assigned successfully!"
 
-    # Step 2: Deploy Function App (with fallback strategy)
-    Write-Step "Deploying function app code..."
+    # Step 2: Build .NET Function
+    Write-Step "Building .NET function..."
     
     $originalLocation = Get-Location
     Set-Location $SourceCodePath
-    $deploymentSuccessful = $false
 
     try {
-        # Primary deployment method: Build and deploy with Azure CLI
-        Write-Status "Attempting deployment with Azure CLI (build + zip)..."
-        
         # Clean and restore
         Write-Status "Cleaning and restoring packages..."
         dotnet clean
@@ -278,8 +265,8 @@ try {
             throw ".NET build failed"
         }
 
-        # Publish .NET Function
-        Write-Status "Publishing .NET function..."
+        # Step 3: Publish .NET Function
+        Write-Step "Publishing .NET function..."
         $publishDir = "./bin/Release/publish"
         
         if (Test-Path $publishDir) {
@@ -291,8 +278,8 @@ try {
             throw ".NET publish failed"
         }
 
-        # Create deployment package
-        Write-Status "Creating deployment package..."
+        # Step 4: Create deployment package
+        Write-Step "Creating deployment package..."
         $zipPath = "./bin/Release/deploy.zip"
         
         if (Test-Path $zipPath) {
@@ -308,84 +295,30 @@ try {
 
         Write-Status "Deployment package created: $zipPath"
 
-        # Deploy to Azure Function using CLI
-        Write-Status "Deploying to Azure Function via CLI..."
-        $zipFullPath = Resolve-Path $zipPath
-        
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12, [Net.SecurityProtocolType]::Tls13
-
-        az functionapp deployment source config-zip `
-            --resource-group $ResourceGroupName `
-            --name $deployedFunctionName `
-            --src $zipFullPath `
-            --timeout 300
-
-        if ($LASTEXITCODE -eq 0) {
-            Write-Status "Primary deployment method (Azure CLI) succeeded!"
-            $deploymentSuccessful = $true
-        }
-        else {
-            throw "Azure CLI deployment failed"
-        }
-
-    }
-    catch {
-        Write-Warning "Primary deployment method failed: $($_.Exception.Message)"
-        Write-Status "Falling back to func azure functionapp publish..." "Yellow"
-        
-        try {
-            # Fallback deployment method: func publish
-            Write-Status "Using Azure Functions Core Tools for deployment..."
-            Write-Status "This may take several minutes as it builds and deploys your function..."
-            
-            # Use func azure functionapp publish (don't sync settings since they're handled in Bicep)
-            func azure functionapp publish $deployedFunctionName --dotnet-isolated
-            
-            if ($LASTEXITCODE -eq 0) {
-                Write-Status "Fallback deployment method (func publish) succeeded!"
-                $deploymentSuccessful = $true
-            }
-            else {
-                throw "func azure functionapp publish also failed"
-            }
-
-            # Restore local.settings.json if backup was created
-            if ($settingsBackupCreated -and (Test-Path $backupSettingsPath)) {
-                Write-Status "Restoring local.settings.json from backup..."
-                Move-Item $backupSettingsPath $localSettingsPath -Force
-            }
-
-        }
-        catch {
-            # Try to restore backup if something went wrong
-            if ($settingsBackupCreated -and (Test-Path $backupSettingsPath)) {
-                Write-Warning "Attempting to restore local.settings.json from backup due to error..."
-                try {
-                    Move-Item $backupSettingsPath $localSettingsPath -Force
-                }
-                catch {
-                    Write-Warning "Could not restore local.settings.json backup"
-                }
-            }
-            throw "Both deployment methods failed. Primary error: $($_.Exception.Message)"
-        }
     }
     finally {
         Set-Location $originalLocation
-        
-        # Clean up deployment artifacts
-        $cleanupPath = "$SourceCodePath/bin/Release/deploy.zip"
-        if (Test-Path $cleanupPath) {
-            Remove-Item $cleanupPath -Force
-        }
     }
 
-    if (-not $deploymentSuccessful) {
-        Write-Error "Function deployment failed with both methods!"
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12, [Net.SecurityProtocolType]::Tls13
+
+    # Step 5: Deploy to Azure Function
+    Write-Step "Deploying code to Azure Function..."
+    
+    $zipFullPath = Resolve-Path "$SourceCodePath/bin/Release/deploy.zip"
+    
+    az functionapp deployment source config-zip `
+        --resource-group $ResourceGroupName `
+        --name $deployedFunctionName `
+        --src $zipFullPath `
+        --timeout 300
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Code deployment failed!"
         exit 1
     }
 
-    # Step 3: Wait for deployment and verify
+    # Step 6: Wait for deployment and verify
     Write-Step "Verifying deployment..."
     Start-Sleep -Seconds 15
 
@@ -404,7 +337,7 @@ try {
         Write-Warning "Function app status: $status"
     }
 
-    # Step 4: Get function information
+    # Step 7: Get function information
     Write-Step "Retrieving deployment information..."
 
     # Get the master key
@@ -437,7 +370,7 @@ try {
         $functions = @()
     }
 
-    # Step 5: Output summary
+    # Step 8: Output summary
     Write-Step "Deployment Summary"
     Write-Host "==================================" -ForegroundColor Cyan
     Write-Status "Resource Group: $ResourceGroupName"
@@ -461,6 +394,7 @@ try {
     Write-Host "==================================" -ForegroundColor Cyan
 
     $webhookAddressURLEncoded = [System.Web.HttpUtility]::UrlEncode("https://$hostname/api/ReceiveEvents")
+
     $subscriptionUrl = "https://$hostname/api/SubscribeToEvent?contentType=Audit.General&webhookAddress=$webhookAddressURLEncoded"
 
     $response = Invoke-RestMethod -Uri $subscriptionUrl -Method Post
@@ -468,13 +402,22 @@ try {
     Write-Host $response
 
     Write-Host "`nYou can now test Copilot interactions are coming through by triggering an event in M365 Copilot"
+
     Write-Host ""
+
     Write-Host "`n=== Test Copilot Interactions are coming through ==="
     Write-Host "1. Please wait 5 minutes to allow the event to be processed (from your Copilot interaction testing)."
     Write-Host "2. Visit the following URL to check the results:"
     Write-Host "   https://$hostname/api/GetNotifications"
     Write-Host ""
     Write-Host "If you do not see your interaction, something has gone wrong. Please check the Azure Function logs for errors."
+
+    # Clean up
+    Write-Step "Cleaning up temporary files..."
+    $cleanupPath = "$SourceCodePath/bin/Release/deploy.zip"
+    if (Test-Path $cleanupPath) {
+        Remove-Item $cleanupPath -Force
+    }
 
     Write-Host ""
     Write-Status "Deployment completed successfully! 🎉" "Green"

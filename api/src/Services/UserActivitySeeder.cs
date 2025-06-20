@@ -14,16 +14,14 @@ namespace groveale.Services
     public class UserActivitySeeder : IUserActivitySeeder
     {
         private readonly ILogger<UserActivitySeeder> _logger;
-        private readonly AzureTableService _azureTableService;
-        private readonly ISettingsService _settingsService;
+        private readonly IAzureTableService _azureTableService;
 
 
 
-        public UserActivitySeeder(ILogger<UserActivitySeeder> logger, AzureTableService azureTableService, ISettingsService settingsService)
+        public UserActivitySeeder(ILogger<UserActivitySeeder> logger, IAzureTableService azureTableService)
         {
             _logger = logger;
             _azureTableService = azureTableService;
-            _settingsService = settingsService;
         }
 
 

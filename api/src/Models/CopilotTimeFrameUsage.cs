@@ -15,7 +15,7 @@ public class CopilotTimeFrameUsage : BaseTableEntity
 
     public TableEntity ToAllTimeTableEntity()
     {
-        PartitionKey = AllTimePartitionKeyPrefix + App.ToString();
+        PartitionKey = $"{AllTimePartitionKeyPrefix}-{App.ToString()}";
         RowKey = UPN;
 
         return new TableEntity(PartitionKey, RowKey)
@@ -29,7 +29,7 @@ public class CopilotTimeFrameUsage : BaseTableEntity
 
     public TableEntity ToTimeFrameTableEntity(string stringStartDate)
     {
-        PartitionKey = stringStartDate + App.ToString();
+        PartitionKey = $"{stringStartDate}-{App.ToString()}";
         RowKey = UPN;
 
         return new TableEntity(PartitionKey, RowKey)
