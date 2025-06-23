@@ -175,45 +175,77 @@ namespace groveale
                         await _azureTableService.AddSingleCopilotInteractionDailyAggregationForUserAsync(copilotEventData, userId);
                     }
 
-                    // Add web plugin interactions to the table (AISystemPlugin == "BingWebSearch")
-                    var webPluginInteractions = groupedCopilotEventData[userId]
-                        .Where(data => data.AISystemPlugin.Any(plugin => plugin.Name == "BingWebSearch"))
-                        .ToList();
-                
-                    // If there are no web plugin interactions, skip this step
-                    if (webPluginInteractions.Count > 0)
+                    try
                     {
-                        // Add the web plugin interactions to the table
-                        await _azureTableService.AddSpecificCopilotInteractionDailyAggregationForUserAsync(AppType.WebPlugin, userId, webPluginInteractions.Count());
+                        // Add web plugin interactions to the table (AISystemPlugin == "BingWebSearch")
+                        var webPluginInteractions = groupedCopilotEventData[userId]
+                            .Where(data => data.AISystemPlugin.Any(plugin => plugin.Name == "BingWebSearch"))
+                            .ToList();
+
+                        // If there are no web plugin interactions, skip this step
+                        if (webPluginInteractions.Count > 0)
+                        {
+                            // Add the web plugin interactions to the table
+                            await _azureTableService.AddSpecificCopilotInteractionDailyAggregationForUserAsync(AppType.WebPlugin, userId, webPluginInteractions.Count());
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError("Error adding web plugin interactions for user {UserId}. Message: {Message}", userId, ex.Message);
+                        _logger.LogError("Stack Trace: {StackTrace}", ex.StackTrace);
+                        _logger.LogError("Inner Exception: {InnerException}", ex.InnerException?.Message);
+                        _logger.LogError("Inner Exception Stack Trace: {InnerExceptionStackTrace}", ex.InnerException?.StackTrace); 
                     }
                     
-                    // Finally add the total copilot interaction for the user to the table
-                    await _azureTableService.AddSpecificCopilotInteractionDailyAggregationForUserAsync(AppType.All, userId, groupedCopilotEventData[userId].Count());
+                    
+                    try
+                    {
+                        // Finally add the total copilot interaction for the user to the table
+                        await _azureTableService.AddSpecificCopilotInteractionDailyAggregationForUserAsync(AppType.All, userId, groupedCopilotEventData[userId].Count());
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError("Error adding total copilot interactions for user {UserId}. Message: {Message}", userId, ex.Message);
+                        _logger.LogError("Stack Trace: {StackTrace}", ex.StackTrace);
+                        _logger.LogError("Inner Exception: {InnerException}", ex.InnerException?.Message);
+                        _logger.LogError("Inner Exception Stack Trace: {InnerExceptionStackTrace}", ex.InnerException?.StackTrace);
+                    }
 
-                    // get record for agents
-                    var copilotAuditRecordsToAdd = groupedCopilotEventData[userId]
+                    try
+                    {
+
+                        // get record for agents
+                        var copilotAuditRecordsToAdd = groupedCopilotEventData[userId]
                         .Where(record => !string.IsNullOrEmpty(record.AgentId))
                         .ToList();
-                    
-                    // group by agentId
-                    var groupedCopilotAgentRecords = copilotAuditRecordsToAdd?
-                        .GroupBy(record => record.AgentId)
-                        .ToDictionary(
-                            group => group.Key, 
-                            group => group.Select(record => record.AgentName).ToList()
-                        );
 
-                    // Go through each group and add to the table
-                    foreach (var agentId in groupedCopilotAgentRecords.Keys)
-                    {
-                        var agentName = groupedCopilotAgentRecords[agentId].FirstOrDefault();
-                        var agentInteractions = groupedCopilotAgentRecords[agentId].Count();
-                        
-                        _logger.LogInformation($"AgentId: {agentId} - AgentName: {agentName} - Interactions: {agentInteractions}");
+                        // group by agentId
+                        var groupedCopilotAgentRecords = copilotAuditRecordsToAdd?
+                            .GroupBy(record => record.AgentId)
+                            .ToDictionary(
+                                group => group.Key,
+                                group => group.Select(record => record.AgentName).ToList()
+                            );
 
-                        await _azureTableService.AddAgentInteractionsDailyAggregationForUserAsync(agentId, userId, agentInteractions, agentName);
+                        // Go through each group and add to the table
+                        foreach (var agentId in groupedCopilotAgentRecords.Keys)
+                        {
+                            var agentName = groupedCopilotAgentRecords[agentId].FirstOrDefault();
+                            var agentInteractions = groupedCopilotAgentRecords[agentId].Count();
+
+                            _logger.LogInformation($"AgentId: {agentId} - AgentName: {agentName} - Interactions: {agentInteractions}");
+
+                            await _azureTableService.AddAgentInteractionsDailyAggregationForUserAsync(agentId, userId, agentInteractions, agentName);
+                        }
                     }
-
+                    catch (Exception ex)
+                    {
+                        _logger.LogError("Error adding agent interactions for user {UserId}. Message: {Message}", userId, ex.Message);
+                        _logger.LogError("Stack Trace: {StackTrace}", ex.StackTrace);
+                        _logger.LogError("Inner Exception: {InnerException}", ex.InnerException?.Message);
+                        _logger.LogError("Inner Exception Stack Trace: {InnerExceptionStackTrace}", ex.InnerException?.StackTrace);
+                    }
+                
                 }
             
 

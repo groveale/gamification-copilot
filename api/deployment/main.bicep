@@ -11,7 +11,7 @@ param storageAccountType string = 'Standard_LRS'
 
 @description('App Service Plan SKU')
 @allowed(['Y1', 'B1', 'EP1', 'EP2', 'EP3', 'P1v2', 'P2v2', 'P3v2'])
-param appServicePlanSku string = 'B1'
+param appServicePlanSku string = 'Y1'
 
 @description('Application name for resource naming')
 param applicationName string

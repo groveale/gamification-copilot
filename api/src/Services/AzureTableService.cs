@@ -1498,7 +1498,7 @@ namespace groveale.Services
         public async Task<List<InactiveUser>> GetInactiveUsers(int days)
         {
             // query to find user with more than days inactivity
-            string filter = TableClient.CreateQueryFilter($"DaysSinceLastActivity eq {days}");
+            string filter = TableClient.CreateQueryFilter($"DaysSinceLastActivity ge {days}");
 
             // Get the users
             var users = new List<InactiveUser>();

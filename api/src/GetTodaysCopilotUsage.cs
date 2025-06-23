@@ -100,7 +100,7 @@ namespace groverale
             {
                 if (copilotUsers.ContainsKey(u.UserPrincipalName))
                 {
-                    filteredUsageData.Add(u);
+                    filteredUsageData.Add(u);           
                 }
             }
 

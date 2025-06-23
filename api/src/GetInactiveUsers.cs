@@ -12,9 +12,9 @@ namespace groveale
         private readonly ILogger<GetInactiveUsers> _logger;
         private readonly IAzureTableService _azureTableService;
 
-        public GetInactiveUsers(ILogger<GetInactiveUsers> logger, IAzureTableService _azureTableService)
+        public GetInactiveUsers(ILogger<GetInactiveUsers> logger, IAzureTableService azureTableService)
         {
-            _azureTableService = _azureTableService;
+            _azureTableService = azureTableService;
             _logger = logger;
         }
 
