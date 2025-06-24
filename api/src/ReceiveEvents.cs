@@ -179,7 +179,7 @@ namespace groveale
                     {
                         // Add web plugin interactions to the table (AISystemPlugin == "BingWebSearch")
                         var webPluginInteractions = groupedCopilotEventData[userId]
-                            .Where(data => data.AISystemPlugin.Any(plugin => plugin.Name == "BingWebSearch"))
+                            .Where(data => data.AISystemPlugin != null && data.AISystemPlugin.Any(plugin => plugin.Name == "BingWebSearch"))
                             .ToList();
 
                         // If there are no web plugin interactions, skip this step

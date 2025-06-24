@@ -69,16 +69,27 @@ namespace groveale.Services
             // var responseContent = await response.Content.ReadAsStringAsync();
             // var tokenResponse = JsonConvert.DeserializeObject<TokenResponse>(responseContent);
             // _accessToken = tokenResponse.AccessToken;
-            
+
             var credential = new DefaultAzureCredential();
             var tokenRequestContext = new TokenRequestContext(new[] { "https://manage.office.com/.default" });
-            var token = await credential.GetTokenAsync(tokenRequestContext);
 
-            _accessToken = token.Token;
+            try
+            {
+                var token = await credential.GetTokenAsync(tokenRequestContext);
 
-            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
+                _accessToken = token.Token;
 
-            _logger.LogInformation("Authenticated successfully.");
+                _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
+
+                _logger.LogInformation("Authenticated successfully.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Authentication failed: {ex.Message}");
+                throw new Exception("Authentication failed. Please check your function and permissions.", ex);
+            }
+
+
         }
 
         public async Task<ApiSubscription> SubscribeToAuditEventsAsync(string configuredContentType, string webhookAddress)
@@ -127,7 +138,7 @@ namespace groveale.Services
                 }
                 catch (HttpRequestException)
                 {
-                    _logger.LogInformation("Can't create subscription. Check service-account permissions to Office 365 Activity API & that audit-log is turned on for tenant.");
+                    _logger.LogInformation("Can't create subscription. Check permissions to Office 365 Activity API & that audit-log is turned on for tenant.");
                     _logger.LogInformation("https://docs.microsoft.com/en-gb/microsoft-365/compliance/turn-audit-log-search-on-or-off?view=o365-worldwide");
                     throw;
                 }

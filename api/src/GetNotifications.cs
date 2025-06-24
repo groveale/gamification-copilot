@@ -111,7 +111,7 @@ namespace groveale
                     {
                         // Add web plugin interactions to the table (AISystemPlugin == "BingWebSearch")
                         var webPluginInteractions = groupedCopilotEventData[userId]
-                            .Where(data => data.AISystemPlugin.Any(plugin => plugin.Name == "BingWebSearch"))
+                            .Where(data => data.AISystemPlugin != null && data.AISystemPlugin.Any(plugin => plugin.Name == "BingWebSearch"))
                             .ToList();
 
                         // If there are no web plugin interactions, skip this step
@@ -126,7 +126,7 @@ namespace groveale
                         _logger.LogError("Error adding web plugin interactions for user {UserId}. Message: {Message}", userId, ex.Message);
                         _logger.LogError("Stack Trace: {StackTrace}", ex.StackTrace);
                         _logger.LogError("Inner Exception: {InnerException}", ex.InnerException?.Message);
-                        _logger.LogError("Inner Exception Stack Trace: {InnerExceptionStackTrace}", ex.InnerException?.StackTrace); 
+                        _logger.LogError("Inner Exception Stack Trace: {InnerExceptionStackTrace}", ex.InnerException?.StackTrace);
                     }
 
                     try

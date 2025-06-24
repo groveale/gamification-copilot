@@ -40,8 +40,17 @@ namespace groveale
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error creating subscription.");
-                return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+                _logger.LogError("Error listing subscriptions.");
+                // Log the exception details
+                _logger.LogError("Exception details: {Message}", ex.Message);
+                // Optionally, you can log the stack trace
+                _logger.LogError("Stack trace: {StackTrace}", ex.StackTrace);
+
+                return
+                    new ObjectResult(new { error = $"An error occurred while listing subscriptions. {ex.Message}" })
+                    {
+                        StatusCode = StatusCodes.Status500InternalServerError
+                    };
             }
         }
     }
