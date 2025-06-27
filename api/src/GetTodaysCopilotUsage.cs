@@ -76,6 +76,13 @@ namespace groverale
                     return;
                 }
 
+                _logger.LogInformation($"Processing usage data for {copilotUsageData.Count} users...");
+
+                // output the report refresh date, just get first user
+                var reportRefreshDate = copilotUsageData.FirstOrDefault().ReportRefreshDate;
+
+                _logger.LogInformation($"Report refresh date: {reportRefreshDate}");
+
                 // Create Encyption Service
                 var encryptionService = await DeterministicEncryptionService.CreateAsync(_settingsService, _keyVaultService);
 

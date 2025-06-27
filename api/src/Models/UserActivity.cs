@@ -63,11 +63,13 @@ public class UserActivity : BaseTableEntity
     public int DailyWebPluginInteractions { get; set; }
     public bool DailyAgentActivity { get; set; }
     public int DailyAgentInteractions { get; set; }
+    public bool DailyCopilotStudioActivity { get; set; }
+    public int DailyCopilotStudioInteractionCount { get; set; }
 
     // Converts the UserActivity object to a TableEntity
     public TableEntity ToTableEntity()
     {
-        PartitionKey = ReportDate.ToString("yyyy-MM-dd");;
+        PartitionKey = ReportDate.ToString("yyyy-MM-dd"); ;
         RowKey = UPN;
 
         return new TableEntity(PartitionKey, RowKey)
@@ -111,7 +113,9 @@ public class UserActivity : BaseTableEntity
             { nameof(DailyWebPluginActivity), DailyWebPluginActivity },
             { nameof(DailyWebPluginInteractions), DailyWebPluginInteractions },
             { nameof(DailyAgentActivity), DailyAgentActivity },
-            { nameof(DailyAgentInteractions), DailyAgentInteractions }
+            { nameof(DailyAgentInteractions), DailyAgentInteractions },
+            { nameof(DailyCopilotStudioActivity), DailyCopilotStudioActivity },
+            { nameof(DailyCopilotStudioInteractionCount), DailyCopilotStudioInteractionCount }
         };
     }
 }

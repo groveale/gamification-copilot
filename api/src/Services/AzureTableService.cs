@@ -878,6 +878,9 @@ namespace groveale.Services
                 // Todo, store the more precise data in the table
                 var userActivityDictionary = ConvertToUsageDictionary(userEntity);
 
+                // Log the user activityDictionary
+                _logger.LogInformation($"User Activity Dictionary for {userEntity.UPN}: {string.Join(", ", userActivityDictionary.Select(kvp => $"{kvp.Key}: {kvp.Value}"))}");
+
 
                 // Todo, do we really need to store this data in the table?
                 // For now we won't
@@ -912,8 +915,8 @@ namespace groveale.Services
                 // Update Weekly - Get our timeFrame
                 var firstMondayOfWeeklySnapshot = GetWeekStartDate(userEntity.ReportDate);
 
-                await UpdateUserSnapshots(userActivityDictionary, userEntity.UPN, firstMondayOfWeeklySnapshot, firstMondayOfWeeklySnapshot);
-                await UpdateAgentSnapshots(dailyAgentData, "monthly", userEntity.UPN, firstMondayOfWeeklySnapshot);
+                await UpdateUserSnapshots(userActivityDictionary, userEntity.UPN, "weekly", firstMondayOfWeeklySnapshot);
+                await UpdateAgentSnapshots(dailyAgentData, "weekly", userEntity.UPN, firstMondayOfWeeklySnapshot);
 
             }
 
@@ -967,10 +970,17 @@ namespace groveale.Services
         {
             List<CopilotTimeFrameUsage> copilotInteractions = new List<CopilotTimeFrameUsage>();
 
+            // Log the user we are getting the data for
+            _logger.LogInformation($"Retrieving daily audit data for UPN: {uPN}, ReportDate: {reportDate}");
+
             try
             {
                 // Query by partition key only
                 string filter = $"PartitionKey eq '{reportDate}-{uPN}'";
+
+                // Log the filter being used
+                _logger.LogInformation($"Querying copilot interaction daily aggregations with filter: {filter}");
+
                 var queryResults = copilotInteractionDailyAggregationsTableClient.QueryAsync<CopilotTimeFrameUsage>(filter);
 
                 // Process the results
@@ -994,6 +1004,9 @@ namespace groveale.Services
             {
                 _logger.LogError($"Failed to retrieve entity for UPN: {uPN}, ReportDate: {reportDate}. Error: {ex.Message}");
             }
+
+            // log the number of interactions retrieved
+            _logger.LogInformation($"Retrieved {copilotInteractions.Count} interactions for UPN: {uPN}, ReportDate: {reportDate}");
 
             return copilotInteractions;
         }
@@ -1045,7 +1058,9 @@ namespace groveale.Services
                     DailyWebPluginActivity = false,
                     DailyWebPluginInteractions = 0,
                     DailyAgentActivity = false,
-                    DailyAgentInteractions = 0
+                    DailyAgentInteractions = 0,
+                    DailyCopilotStudioActivity = false,
+                    DailyCopilotStudioInteractionCount = 0
                 };
             }
 
@@ -1111,6 +1126,7 @@ namespace groveale.Services
                 DailyCopilotChatActivity = DailyUsage(user.CopilotChatLastActivityDate, user.ReportRefreshDate),
                 DailyCopilotChatInteractionCount = DailyInteractionCountForApp(AppType.CopilotChat),
                 DailyAllInteractionCount = DailyInteractionCountForApp(AppType.All),
+
                 DailyMACActivity = DailyUsageFromCount(DailyInteractionCountForApp(AppType.MAC)),
                 DailyMACInteractionCount = DailyInteractionCountForApp(AppType.MAC),
                 DailyDesignerActivity = DailyUsageFromCount(DailyInteractionCountForApp(AppType.Designer)),
@@ -1131,8 +1147,10 @@ namespace groveale.Services
                 DailyWebPluginInteractions = DailyInteractionCountForApp(AppType.WebPlugin),
                 DailyAgentActivity = DailyUsageFromCount(DailyInteractionCountForApp(AppType.Agent)),
                 DailyAgentInteractions = DailyInteractionCountForApp(AppType.Agent),
+                DailyCopilotStudioActivity = DailyUsageFromCount(DailyInteractionCountForApp(AppType.CopilotStudio)),
+                DailyCopilotStudioInteractionCount = DailyInteractionCountForApp(AppType.CopilotStudio  ),
 
-                DailyAllUpActivity = copilotAllUpActivity
+                DailyAllUpActivity = DailyUsageFromCount(DailyInteractionCountForApp(AppType.All))
             };
         }
 
@@ -1158,7 +1176,9 @@ namespace groveale.Services
                 { AppType.Stream, new Tuple<bool,int>(userActivity.DailyStreamActivity, userActivity.DailyStreamInteractionCount) },
                 { AppType.Forms, new Tuple<bool,int>(userActivity.DailyFormsActivity, userActivity.DailyFormsInteractionCount) },
                 { AppType.CopilotAction, new Tuple<bool,int>(userActivity.DailyCopilotActionActivity, userActivity.DailyCopilotActionCount) },
-                { AppType.WebPlugin, new Tuple<bool,int>(userActivity.DailyWebPluginActivity, userActivity.DailyWebPluginInteractions) }
+                { AppType.WebPlugin, new Tuple<bool,int>(userActivity.DailyWebPluginActivity, userActivity.DailyWebPluginInteractions) },
+                { AppType.Agent, new Tuple<bool,int>(userActivity.DailyAgentActivity, userActivity.DailyAgentInteractions) },
+                { AppType.CopilotStudio, new Tuple<bool,int>(userActivity.DailyCopilotStudioActivity, userActivity.DailyCopilotStudioInteractionCount) }
             };
 
             return usage;
@@ -1321,17 +1341,17 @@ namespace groveale.Services
         {
             // get the table
             var tableClient = _userAllTimeTableClient;
-            string partitionKey = $"{CopilotTimeFrameUsage.AllTimePartitionKeyPrefix}-{upn}";
+            string partitionKey = $"{CopilotTimeFrameUsage.AllTimePartitionKeyPrefix}";
 
             if (timeFrame == "weekly")
             {
                 tableClient = _userWeeklyTableClient;
-                partitionKey = $"{startDate}-{upn}";
+                partitionKey = $"{startDate}";
             }
             else if (timeFrame == "monthly")
             {
                 tableClient = _userMonthlyTableClient;
-                partitionKey = $"{startDate}-{upn}";
+                partitionKey = $"{startDate}";
             }
 
             foreach (var (app, tuple) in userActivityDictionary)
@@ -1339,14 +1359,19 @@ namespace groveale.Services
                 bool dailyUsage = tuple.Item1;
                 int interactionCount = tuple.Item2;
 
+                string appPartitionKey = $"{partitionKey}-{app}";
+
                 try
                 {
                     // Get the existing entity
-                    var existingTableEntity = await tableClient.GetEntityAsync<CopilotTimeFrameUsage>(partitionKey, app.ToString());
+                    var existingTableEntity = await tableClient.GetEntityAsync<CopilotTimeFrameUsage>(appPartitionKey, upn);
 
                     // If usage 
                     if (dailyUsage)
                     {
+                        // log that we are 
+                        _logger.LogInformation($"Updating {app} usage for {upn} on {timeFrame} with interaction count {interactionCount}.");
+
                         // Increment the daily all time activity count
                         existingTableEntity.Value.TotalDailyActivityCount = existingTableEntity.Value.TotalDailyActivityCount + 1;
                         existingTableEntity.Value.CurrentDailyStreak = existingTableEntity.Value.CurrentDailyStreak + 1;
@@ -1355,13 +1380,20 @@ namespace groveale.Services
                             existingTableEntity.Value.CurrentDailyStreak ?? 0);
                         existingTableEntity.Value.TotalInteractionCount = existingTableEntity.Value.TotalInteractionCount + interactionCount;
 
-                        await tableClient.UpdateEntityAsync(existingTableEntity.Value, ETag.All, TableUpdateMode.Merge);
+                        await tableClient.UpdateEntityAsync(existingTableEntity.Value, existingTableEntity.Value.ETag, TableUpdateMode.Replace);
+
+                        // Log the update
+                        _logger.LogInformation($"Updated {app} usage for {upn} on {timeFrame} with interaction count {interactionCount}. " +
+                                               $"TotalDailyActivityCount: {existingTableEntity.Value.TotalDailyActivityCount}, " +
+                                               $"CurrentDailyStreak: {existingTableEntity.Value.CurrentDailyStreak}, " +
+                                               $"BestDailyStreak: {existingTableEntity.Value.BestDailyStreak}, " +
+                                               $"TotalInteractionCount: {existingTableEntity.Value.TotalInteractionCount}");
                     }
                     else
                     {
                         // Reset the current daily streak
                         existingTableEntity.Value.CurrentDailyStreak = 0;
-                        await tableClient.UpdateEntityAsync(existingTableEntity.Value, ETag.All, TableUpdateMode.Merge);
+                        await tableClient.UpdateEntityAsync(existingTableEntity.Value, existingTableEntity.Value.ETag, TableUpdateMode.Merge);
                     }
                 }
                 catch (RequestFailedException ex) when (ex.Status == 404)
@@ -1370,6 +1402,9 @@ namespace groveale.Services
                     // Only create if usage
                     if (dailyUsage)
                     {
+                        // log that we are creating a new entity
+                        _logger.LogInformation($"Creating new {app} usage for {upn} on {timeFrame} with interaction count {interactionCount}.");
+
                         var newAllTimeUsage = new CopilotTimeFrameUsage()
                         {
                             UPN = upn,
@@ -1388,12 +1423,24 @@ namespace groveale.Services
                         {
                             await tableClient.AddEntityAsync(newAllTimeUsage.ToTimeFrameTableEntity(startDate));
                         }
+
+                        // Log the creation
+                        _logger.LogInformation($"Created new {app} usage for {upn} on {timeFrame} with interaction count {interactionCount}. " +
+                                            $"TotalDailyActivityCount: 1, " +
+                                            $"CurrentDailyStreak: 1, " +
+                                            $"BestDailyStreak: 1, " +
+                                            $"TotalInteractionCount: {interactionCount}");
                     }
+
+
 
                 }
                 catch (RequestFailedException ex)
                 {
-                    Console.WriteLine($"Error updating records: {ex.Message}");
+                    _logger.LogError("Error getting notifications. Message: {Message}", ex.Message);
+                    _logger.LogError("Stack Trace: {StackTrace}", ex.StackTrace);
+                    _logger.LogError("Inner Exception: {InnerException}", ex.InnerException?.Message);
+                    _logger.LogError("Inner Exception Stack Trace: {InnerExceptionStackTrace}", ex.InnerException?.StackTrace);
                 }
             }
         }

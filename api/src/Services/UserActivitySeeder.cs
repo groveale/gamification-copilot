@@ -175,7 +175,7 @@ namespace groveale.Services
                 // Create a simple activity entry with random boolean values
                 var activity = new InactiveUser
                 {
-                    UPN = upn,
+                    UPN = encryptionService.Encrypt(upn),
                     DaysSinceLastActivity = possibleDays[random.Next(0, possibleDays.Length)],
                 };
 

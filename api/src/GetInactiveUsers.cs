@@ -11,9 +11,13 @@ namespace groveale
     {
         private readonly ILogger<GetInactiveUsers> _logger;
         private readonly IAzureTableService _azureTableService;
+        private readonly ISettingsService _settingsService;
+        private readonly IKeyVaultService _keyVaultService;
 
-        public GetInactiveUsers(ILogger<GetInactiveUsers> logger, IAzureTableService azureTableService)
+        public GetInactiveUsers(ILogger<GetInactiveUsers> logger, IAzureTableService azureTableService, ISettingsService settingsService, IKeyVaultService keyVaultService)
         {
+            _settingsService = settingsService;
+            _keyVaultService = keyVaultService;
             _azureTableService = azureTableService;
             _logger = logger;
         }
@@ -37,6 +41,18 @@ namespace groveale
             }
 
             var users = await _azureTableService.GetInactiveUsers(days);
+
+            // Decrypt users
+            if (users.Any())
+            {
+                // Create Encyption Service
+                var encryptionService = await DeterministicEncryptionService.CreateAsync(_settingsService, _keyVaultService);
+            
+                foreach (var user in users)
+                {
+                    user.UPN = encryptionService.Decrypt(user.UPN);
+                }
+            }
 
             // Process the request and return the result
             return new OkObjectResult(users);
