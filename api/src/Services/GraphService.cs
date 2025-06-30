@@ -17,7 +17,8 @@ namespace groveale.Services
         Task SetReportAnonSettingsAsync(bool displayConcealedNames);
         Task<AdminReportSettings> GetReportAnonSettingsAsync();
 
-        Task<Dictionary<string, bool>> GetM365CopilotUsersAsync();
+        Task<Dictionary<string, bool>> GetM365CopilotUsersAsync(string reportRefreshDate);
+        Task<Dictionary<string, bool>> GetM365CopilotUserFallBackAsync();
     }
 
     public class GraphService : IGraphService
@@ -71,7 +72,58 @@ namespace groveale.Services
             return users;
         }
 
-        public async Task<Dictionary<string, bool>> GetM365CopilotUsersAsync()
+        public async Task<Dictionary<string, bool>> GetM365CopilotUsersAsync(string reportRefreshDate)
+        {
+            var activeUsers = new List<Office365ActiveUserDetail>();
+
+            // convert string date to Kiota Date
+            var dateTimeOffset = DateTimeOffset.Parse(reportRefreshDate);
+            var kiotaDate = new Microsoft.Kiota.Abstractions.Date(dateTimeOffset.DateTime);
+
+            var urlString = _graphServiceClient.Reports.GetOffice365ActiveUserDetailWithDate(kiotaDate).ToGetRequestInformation().URI.OriginalString;
+            urlString += "?$format=application/json";//append the query parameter
+
+            try
+            {
+                var activeUsersResponse = await _graphServiceClient.Reports.GetOffice365ActiveUserDetailWithDate(kiotaDate).WithUrl(urlString).GetAsGetOffice365ActiveUserDetailWithDateGetResponseAsync();
+
+                activeUsers.AddRange(activeUsersResponse.Value);
+
+                while (activeUsersResponse.OdataNextLink != null)
+                {
+                    activeUsersResponse = await _graphServiceClient.Reports.GetOffice365ActiveUserDetailWithDate(kiotaDate).WithUrl(activeUsersResponse.OdataNextLink).GetAsGetOffice365ActiveUserDetailWithDateGetResponseAsync();
+                    activeUsers.AddRange(activeUsersResponse.Value);
+                }
+
+                var copilotUsers = new Dictionary<string, bool>();
+                // find all the user that have a copilot license. let's use lynq to filter the users
+                activeUsers.Where(usr => usr.AssignedProducts.Contains("MICROSOFT 365 COPILOT")).ToList().ForEach(usr =>
+                {
+                    // Check if user has activity in Teams, Outlook or SharePoint or OneDrive on the report refresh date
+                    if (usr.TeamsLastActivityDate.GetValueOrDefault().DateTime == usr.ReportRefreshDate.GetValueOrDefault().DateTime ||
+                        usr.ExchangeLastActivityDate.GetValueOrDefault().DateTime == usr.ReportRefreshDate.GetValueOrDefault().DateTime ||
+                        usr.SharePointLastActivityDate.GetValueOrDefault().DateTime == usr.ReportRefreshDate.GetValueOrDefault().DateTime ||
+                        usr.OneDriveLastActivityDate.GetValueOrDefault().DateTime == usr.ReportRefreshDate.GetValueOrDefault().DateTime)
+                    {
+                        // Add the user to the list
+                        copilotUsers.Add(usr.UserPrincipalName, true);
+                    }
+
+                    // if no usage they are considered offline and not processed (should reduce weekend overhead processing)
+                });
+
+                return copilotUsers;
+
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error getting copilot users: {ex.Message}");
+            }
+
+            return null;
+        }
+
+        public async Task<Dictionary<string, bool>> GetM365CopilotUserFallBackAsync()
         {
             var activeUsers = new List<Office365ActiveUserDetail>();
 
@@ -93,17 +145,8 @@ namespace groveale.Services
                 var copilotUsers = new Dictionary<string, bool>();
                 // find all the user that have a copilot license. let's use lynq to filter the users
                 activeUsers.Where(usr => usr.AssignedProducts.Contains("MICROSOFT 365 COPILOT")).ToList().ForEach(usr =>
-                {
-                    // Check if user has activity in Teams, Outlook or SharePoint
-                    if (usr.TeamsLastActivityDate.GetValueOrDefault().DateTime == usr.ReportRefreshDate.GetValueOrDefault().DateTime ||
-                        usr.ExchangeLastActivityDate.GetValueOrDefault().DateTime == usr.ReportRefreshDate.GetValueOrDefault().DateTime ||
-                        usr.SharePointLastActivityDate.GetValueOrDefault().DateTime == usr.ReportRefreshDate.GetValueOrDefault().DateTime)
-                    {
-                        // Add the user to the list
-                        copilotUsers.Add(usr.UserPrincipalName, true);
-                    }
-
-                    // if no usage they are considered offline and not processed (should reduce weekend overhead processing)
+                {                   
+                    copilotUsers.Add(usr.UserPrincipalName, true);
                 });
 
                 return copilotUsers;

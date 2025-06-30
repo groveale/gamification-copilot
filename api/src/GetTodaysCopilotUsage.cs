@@ -52,8 +52,28 @@ namespace groverale
             var usageData = await _graphService.GetM365CopilotUsageReportAsyncJSON(_logger);
             _logger.LogInformation($"Usage data: {usageData.Count}");
 
-            var copilotUsers = await _graphService.GetM365CopilotUsersAsync();
+            // extract the refresh date from the first or default user
+            if (usageData.Count == 0)
+            {
+                // unlikey to ever really happen, but just in case
+                _logger.LogWarning("No usage data found.");
+                return;
+            }
+
+            var firstUser = usageData.FirstOrDefault();
+            var reportRefreshDate = firstUser.ReportRefreshDate;
+            _logger.LogInformation($"Report refresh date: {reportRefreshDate}");
+
+            var copilotUsers = await _graphService.GetM365CopilotUsersAsync(reportRefreshDate);
             _logger.LogInformation($"copilot users: {copilotUsers.Count}");
+
+            // If the copilot users are empty, we can fallback to the old method
+            if (copilotUsers.Count == 0)
+            {
+                _logger.LogWarning("No copilot users found, falling back to old method.");
+                copilotUsers = await _graphService.GetM365CopilotUserFallBackAsync();
+                _logger.LogInformation($"copilot users (fallback): {copilotUsers.Count}");
+            }
     
             // Set the report settings back to hide names (if hidden)
             if (reportSettings.DisplayConcealedNames.Value)
@@ -77,9 +97,6 @@ namespace groverale
                 }
 
                 _logger.LogInformation($"Processing usage data for {copilotUsageData.Count} users...");
-
-                // output the report refresh date, just get first user
-                var reportRefreshDate = copilotUsageData.FirstOrDefault().ReportRefreshDate;
 
                 _logger.LogInformation($"Report refresh date: {reportRefreshDate}");
 
