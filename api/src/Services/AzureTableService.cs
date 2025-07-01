@@ -23,9 +23,16 @@ namespace groveale.Services
         Task<bool> GetWebhookStateAsync();
         Task SetWebhookStateAsync(bool isPaused);
         Task RotateKeyRecentDailyTableValues(TableClient tableClient, DeterministicEncryptionService existingKeyService, DeterministicEncryptionService newKeyService);
+        Task RotateKeyTimeFrameTableValues(TableClient tableClient, DeterministicEncryptionService existingKeyService, DeterministicEncryptionService newKeyService);
 
         TableClient GetCopilotAgentInteractionTableClient();
         TableClient GetCopilotInteractionDailyAggregationsTableClient();
+        TableClient GetWeeklyCopilotInteractionTableClient();
+        TableClient GetMonthlyCopilotInteractionTableClient();
+        TableClient GetAllTimeCopilotInteractionTableClient();
+        TableClient GetWeeklyAgentInteractionTableClient();
+        TableClient GetMonthlyAgentInteractionTableClient();
+        TableClient GetAllTimeAgentInteractionTableClient();
 
         // from other fucntion
         Task<int> ProcessUserDailySnapshots(List<M365CopilotUsage> siteSnapshots, DeterministicEncryptionService encryptionService);
@@ -679,7 +686,9 @@ namespace groveale.Services
             }
         }
 
-        public async Task RotateKeyRecentDailyTableValues(TableClient tableClient, DeterministicEncryptionService existingKeyService, DeterministicEncryptionService newKeyService)
+        #region Key Rotation Methods
+
+        public async Task RotateKeyRecentDailyTableValuesLegacy(TableClient tableClient, DeterministicEncryptionService existingKeyService, DeterministicEncryptionService newKeyService)
         {
             // This method is a placeholder for the decryption logic
             // It should decrypt all UPNs in the table storage for the last 7 days
@@ -758,6 +767,528 @@ namespace groveale.Services
 
         }
 
+        public async Task RotateKeyTimeFrameTableValuesLegacy(TableClient tableClient, DeterministicEncryptionService existingKeyService, DeterministicEncryptionService newKeyService)
+        {
+
+            _logger.LogInformation("Decrypting timeframe table values...");
+            var totalProcessed = 0;
+            var totalErrors = 0;
+
+            string filter = "";
+
+            if (tableClient.Name == _userWeeklyTableName || tableClient.Name == _agentWeeklyByUserTableName)
+            {
+                // Get the weekly start date
+                string startDate = await GetActiveTimeFrame("weekly");
+
+                // convert to date
+                if (!DateTime.TryParse(startDate, out DateTime date))
+                {
+                    _logger.LogError($"Failed to parse start date: {startDate}");
+                    throw new ArgumentException($"Invalid start date format: {startDate}");
+                }
+                string endDate = date.AddDays(7).ToString("yyyy-MM-dd");
+
+                filter = $"PartitionKey ge '{startDate}' and PartitionKey lt '{endDate}'";
+            }
+            else if (tableClient.Name == _userMonthlyTableName || tableClient.Name == _agentMonthlyByUserTableName)
+            {
+                // get the monthly start date
+                string startDate = await GetActiveTimeFrame("monthly");
+
+                // convert to date
+                if (!DateTime.TryParse(startDate, out DateTime date))
+                {
+                    _logger.LogError($"Failed to parse start date: {startDate}");
+                    throw new ArgumentException($"Invalid start date format: {startDate}");
+                }
+                string endDate = date.AddMonths(1).ToString("yyyy-MM-dd");
+
+                filter = $"PartitionKey ge '{startDate}' and PartitionKey lt '{endDate}'";
+            }
+            else
+            {
+                // all time
+            }
+
+            // log the filter
+            _logger.LogInformation($"Querying table with filter: {filter}");
+
+
+            await foreach (var entity in tableClient.QueryAsync<TableEntity>(filter: filter))
+            {
+
+                // LOG THE PARTITION KEY
+                _logger.LogInformation($"Processing entity with PartitionKey: {entity.PartitionKey} and RowKey: {entity.RowKey}");
+
+                // partion key stays the same
+
+                // we need to decypt the row key
+                string encyrptedUPN = entity.RowKey; // Assuming the RowKey is the encrypted UPN
+                string decryptedUPN = existingKeyService.Decrypt(encyrptedUPN);
+
+
+                // log the decrypted UPN
+                _logger.LogInformation($"Decrypted UPN: {decryptedUPN}");
+
+                // Encrypt the UPN using the new key service
+                string newEncryptedUPN = newKeyService.Encrypt(decryptedUPN);
+
+                // Create a new partition key with the new encrypted UPN
+                string newRowKey = newEncryptedUPN;
+
+                // log the new partition key
+                _logger.LogInformation($"New RowKey: {newRowKey}");
+
+                // Step 2: Copy all properties
+                var newEntity = new TableEntity(entity.PartitionKey, newRowKey);
+                foreach (var kvp in entity)
+                {
+                    if (kvp.Key != "PartitionKey" && kvp.Key != "RowKey")
+                    {
+                        newEntity[kvp.Key] = kvp.Value;
+                    }
+                }
+
+                try
+                {
+
+                    // Step 3: Insert new entity and delete old
+                    await tableClient.AddEntityAsync(newEntity);
+                    await tableClient.DeleteEntityAsync(entity.PartitionKey, entity.RowKey);
+                }
+                catch (RequestFailedException ex)
+                {
+                    _logger.LogError($"Error updating table storage using {filter}", ex);
+                    _logger.LogError("Message: {Message}", ex.Message);
+                    _logger.LogError("Status: {Status}", ex.Status);
+                    _logger.LogError("StackTrace: {StackTrace}", ex.StackTrace);
+                }
+
+                _logger.LogInformation($"Rotated key for entity with PartitionKey: {entity.PartitionKey}, RowKey: {entity.RowKey}");
+            }
+
+
+        }
+
+        public async Task RotateKeyRecentDailyTableValues(TableClient tableClient, DeterministicEncryptionService existingKeyService, DeterministicEncryptionService newKeyService)
+        {
+            _logger.LogInformation("Starting key rotation for recent daily table values...");
+            var totalProcessed = 0;
+            var totalErrors = 0;
+
+            // Loop for each day from today - 7 days to today (inclusive)
+            for (int i = 0; i <= 7; i++)
+            {
+                var date = DateTime.UtcNow.Date.AddDays(-i);
+                var nextDate = date.AddDays(1);
+
+                string start = date.ToString("yyyy-MM-dd");
+                string end = nextDate.ToString("yyyy-MM-dd");
+                string filter = $"PartitionKey ge '{start}' and PartitionKey lt '{end}'";
+
+                _logger.LogInformation($"Processing date {start} with filter: {filter}");
+
+                var dayProcessed = 0;
+                var dayErrors = 0;
+
+                try
+                {
+                    // Process entities in pages to avoid memory issues
+                    await foreach (var page in tableClient.QueryAsync<TableEntity>(filter: filter).AsPages(pageSizeHint: 1000))
+                    {
+                        var entitiesToProcess = new List<PartitionKeyRotationInfo>();
+
+                        // Prepare all entities for this page
+                        foreach (var entity in page.Values)
+                        {
+                            try
+                            {
+                                var processingInfo = PrepareEntityForPartitionKeyRotation(entity, existingKeyService, newKeyService, start);
+                                entitiesToProcess.Add(processingInfo);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "Error preparing entity {PartitionKey}/{RowKey} for partition key rotation",
+                                    entity.PartitionKey, entity.RowKey);
+                                dayErrors++;
+                            }
+                        }
+
+                        // Process entities in batches
+                        var batchResults = await ProcessPartitionKeyRotationInBatches(tableClient, entitiesToProcess);
+                        dayProcessed += batchResults.Processed;
+                        dayErrors += batchResults.Errors;
+
+                        _logger.LogInformation($"Processed page: {batchResults.Processed} successful, {batchResults.Errors} errors");
+
+                        // Small delay to avoid throttling
+                        if (page.Values.Count == 1000) // Full page, likely more coming
+                        {
+                            await Task.Delay(100);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error processing date {Date}", start);
+                    dayErrors++;
+                }
+
+                totalProcessed += dayProcessed;
+                totalErrors += dayErrors;
+
+                _logger.LogInformation($"Completed date {start}: {dayProcessed} processed, {dayErrors} errors");
+            }
+
+            _logger.LogInformation($"Partition key rotation completed. Total: {totalProcessed} processed, {totalErrors} errors");
+        }
+
+        public async Task RotateKeyTimeFrameTableValues(TableClient tableClient, DeterministicEncryptionService existingKeyService, DeterministicEncryptionService newKeyService)
+        {
+            _logger.LogInformation("Starting key rotation for timeframe table values...");
+            var totalProcessed = 0;
+            var totalErrors = 0;
+
+            string filter = "";
+
+            // Determine filter based on table name
+            if (tableClient.Name == _userWeeklyTableName || tableClient.Name == _agentWeeklyByUserTableName)
+            {
+                string startDate = await GetActiveTimeFrame("weekly");
+                if (!DateTime.TryParse(startDate, out DateTime date))
+                {
+                    _logger.LogError($"Failed to parse start date: {startDate}");
+                    throw new ArgumentException($"Invalid start date format: {startDate}");
+                }
+                string endDate = date.AddDays(7).ToString("yyyy-MM-dd");
+                filter = $"PartitionKey ge '{startDate}' and PartitionKey lt '{endDate}'";
+            }
+            else if (tableClient.Name == _userMonthlyTableName || tableClient.Name == _agentMonthlyByUserTableName)
+            {
+                string startDate = await GetActiveTimeFrame("monthly");
+                if (!DateTime.TryParse(startDate, out DateTime date))
+                {
+                    _logger.LogError($"Failed to parse start date: {startDate}");
+                    throw new ArgumentException($"Invalid start date format: {startDate}");
+                }
+                string endDate = date.AddMonths(1).ToString("yyyy-MM-dd");
+                filter = $"PartitionKey ge '{startDate}' and PartitionKey lt '{endDate}'";
+            }
+            // else: all time (no filter)
+
+            _logger.LogInformation($"Querying table with filter: {filter}");
+
+            try
+            {
+                // Process entities in pages
+                await foreach (var page in tableClient.QueryAsync<TableEntity>(filter: filter).AsPages(pageSizeHint: 1000))
+                {
+                    var entitiesToProcess = new List<RowKeyRotationInfo>();
+
+                    // Prepare all entities for this page
+                    foreach (var entity in page.Values)
+                    {
+                        try
+                        {
+                            var processingInfo = PrepareEntityForRowKeyRotation(entity, existingKeyService, newKeyService);
+                            entitiesToProcess.Add(processingInfo);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error preparing entity {PartitionKey}/{RowKey} for row key rotation",
+                                entity.PartitionKey, entity.RowKey);
+                            totalErrors++;
+                        }
+                    }
+
+                    // Process entities in batches
+                    var batchResults = await ProcessRowKeyRotationInBatches(tableClient, entitiesToProcess);
+                    totalProcessed += batchResults.Processed;
+                    totalErrors += batchResults.Errors;
+
+                    _logger.LogInformation($"Processed page: {totalProcessed} total processed, {totalErrors} total errors");
+
+                    // Small delay to avoid throttling
+                    if (page.Values.Count == 1000) // Full page, likely more coming
+                    {
+                        await Task.Delay(100);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing timeframe table values");
+                totalErrors++;
+            }
+
+            _logger.LogInformation($"Row key rotation completed. Total: {totalProcessed} processed, {totalErrors} errors");
+        }
+
+        // Helper methods for PartitionKey rotation
+        private PartitionKeyRotationInfo PrepareEntityForPartitionKeyRotation(TableEntity entity,
+            DeterministicEncryptionService existingKeyService,
+            DeterministicEncryptionService newKeyService,
+            string datePrefix)
+        {
+            // Extract encrypted part from PartitionKey (remove first 11 chars: yyyy-MM-dd-)
+            string encryptedUPN = entity.PartitionKey.Substring(11);
+            string decryptedUPN = existingKeyService.Decrypt(encryptedUPN);
+            string newEncryptedUPN = newKeyService.Encrypt(decryptedUPN);
+            string newPartitionKey = $"{datePrefix}-{newEncryptedUPN}";
+
+            // Create new entity with all properties
+            var newEntity = new TableEntity(newPartitionKey, entity.RowKey);
+            foreach (var kvp in entity)
+            {
+                if (kvp.Key != "PartitionKey" && kvp.Key != "RowKey")
+                {
+                    newEntity[kvp.Key] = kvp.Value;
+                }
+            }
+
+            return new PartitionKeyRotationInfo
+            {
+                OriginalEntity = entity,
+                NewEntity = newEntity,
+                DecryptedUPN = decryptedUPN
+            };
+        }
+
+        private async Task<(int Processed, int Errors)> ProcessPartitionKeyRotationInBatches(TableClient tableClient, List<PartitionKeyRotationInfo> entities)
+        {
+            var processed = 0;
+            var errors = 0;
+            const int batchSize = 50; // Conservative batch size
+
+            // Process in chunks
+            var chunks = entities.Chunk(batchSize);
+
+            foreach (var chunk in chunks)
+            {
+                var chunkResults = await ProcessPartitionKeyChunk(tableClient, chunk.ToList());
+                processed += chunkResults.Processed;
+                errors += chunkResults.Errors;
+
+                // Small delay between batches
+                await Task.Delay(50);
+            }
+
+            return (processed, errors);
+        }
+
+        private async Task<(int Processed, int Errors)> ProcessPartitionKeyChunk(TableClient tableClient, List<PartitionKeyRotationInfo> entities)
+        {
+            var processed = 0;
+            var errors = 0;
+
+            // For partition key changes, we need to add new entities first, then delete old ones individually
+            // since they're in different partitions and can't be batched together
+
+            try
+            {
+                // Group new entities by their new partition key for batch adds
+                var addGroups = entities.GroupBy(e => e.NewEntity.PartitionKey);
+
+                foreach (var group in addGroups)
+                {
+                    var addOperations = group.Select(e => new TableTransactionAction(TableTransactionActionType.Add, e.NewEntity))
+                                            .Take(100) // Max 100 per batch
+                                            .ToList();
+
+                    if (addOperations.Count > 0)
+                    {
+                        await tableClient.SubmitTransactionAsync(addOperations);
+                    }
+                }
+
+                // Delete old entities individually (different partition keys)
+                foreach (var entity in entities)
+                {
+                    try
+                    {
+                        await tableClient.DeleteEntityAsync(entity.OriginalEntity.PartitionKey, entity.OriginalEntity.RowKey);
+                        processed++;
+
+                        _logger.LogDebug($"Rotated partition key for UPN: {entity.DecryptedUPN}");
+                    }
+                    catch (RequestFailedException ex) when (ex.Status == 404)
+                    {
+                        // Entity already deleted, count as success
+                        processed++;
+                        _logger.LogWarning($"Entity {entity.OriginalEntity.PartitionKey}/{entity.OriginalEntity.RowKey} already deleted");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error deleting entity {PartitionKey}/{RowKey}",
+                            entity.OriginalEntity.PartitionKey, entity.OriginalEntity.RowKey);
+                        errors++;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Batch operation failed, falling back to individual operations");
+
+                // Fallback: process individually
+                foreach (var entity in entities)
+                {
+                    try
+                    {
+                        await tableClient.AddEntityAsync(entity.NewEntity);
+                        await tableClient.DeleteEntityAsync(entity.OriginalEntity.PartitionKey, entity.OriginalEntity.RowKey);
+                        processed++;
+
+                        _logger.LogDebug($"Individually rotated partition key for UPN: {entity.DecryptedUPN}");
+                    }
+                    catch (Exception individualEx)
+                    {
+                        _logger.LogError(individualEx, "Error processing entity {PartitionKey}/{RowKey}",
+                            entity.OriginalEntity.PartitionKey, entity.OriginalEntity.RowKey);
+                        errors++;
+                    }
+                }
+            }
+
+            return (processed, errors);
+        }
+
+        // Helper methods for RowKey rotation
+        private RowKeyRotationInfo PrepareEntityForRowKeyRotation(TableEntity entity,
+            DeterministicEncryptionService existingKeyService,
+            DeterministicEncryptionService newKeyService)
+        {
+            // Decrypt the RowKey (assuming it's the encrypted UPN)
+            string encryptedUPN = entity.RowKey;
+            string decryptedUPN = existingKeyService.Decrypt(encryptedUPN);
+            string newEncryptedUPN = newKeyService.Encrypt(decryptedUPN);
+
+            // Create new entity with same PartitionKey but new RowKey
+            var newEntity = new TableEntity(entity.PartitionKey, newEncryptedUPN);
+            foreach (var kvp in entity)
+            {
+                if (kvp.Key != "PartitionKey" && kvp.Key != "RowKey")
+                {
+                    newEntity[kvp.Key] = kvp.Value;
+                }
+            }
+
+            return new RowKeyRotationInfo
+            {
+                OriginalEntity = entity,
+                NewEntity = newEntity,
+                DecryptedUPN = decryptedUPN
+            };
+        }
+
+        private async Task<(int Processed, int Errors)> ProcessRowKeyRotationInBatches(TableClient tableClient, List<RowKeyRotationInfo> entities)
+        {
+            var processed = 0;
+            var errors = 0;
+
+            // Group by partition key for batch operations (row key changes can be batched within same partition)
+            var partitionGroups = entities.GroupBy(e => e.OriginalEntity.PartitionKey);
+
+            foreach (var partitionGroup in partitionGroups)
+            {
+                // Process each partition in chunks of 100 (Azure batch limit)
+                var chunks = partitionGroup.Chunk(100);
+
+                foreach (var chunk in chunks)
+                {
+                    var chunkResults = await ProcessRowKeyChunk(tableClient, chunk.ToList());
+                    processed += chunkResults.Processed;
+                    errors += chunkResults.Errors;
+
+                    // Small delay between batches
+                    await Task.Delay(50);
+                }
+            }
+
+            return (processed, errors);
+        }
+
+        private async Task<(int Processed, int Errors)> ProcessRowKeyChunk(TableClient tableClient, List<RowKeyRotationInfo> entities)
+        {
+            var processed = 0;
+            var errors = 0;
+
+            try
+            {
+                // All entities in chunk have same partition key, so we can batch both adds and deletes
+                var addOperations = entities.Select(e =>
+                    new TableTransactionAction(TableTransactionActionType.Add, e.NewEntity)).ToList();
+
+                var deleteOperations = entities.Select(e =>
+                    new TableTransactionAction(TableTransactionActionType.Delete, e.OriginalEntity)).ToList();
+
+                // Add new entities first
+                if (addOperations.Count > 0)
+                {
+                    await tableClient.SubmitTransactionAsync(addOperations);
+                }
+
+                // Then delete old entities
+                if (deleteOperations.Count > 0)
+                {
+                    await tableClient.SubmitTransactionAsync(deleteOperations);
+                }
+
+                processed = entities.Count;
+
+                foreach (var entity in entities)
+                {
+                    _logger.LogDebug($"Rotated row key for UPN: {entity.DecryptedUPN} in partition {entity.OriginalEntity.PartitionKey}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Batch row key rotation failed, falling back to individual operations");
+
+                // Fallback: process individually
+                foreach (var entity in entities)
+                {
+                    try
+                    {
+                        await tableClient.AddEntityAsync(entity.NewEntity);
+                        await tableClient.DeleteEntityAsync(entity.OriginalEntity.PartitionKey, entity.OriginalEntity.RowKey);
+                        processed++;
+
+                        _logger.LogDebug($"Individually rotated row key for UPN: {entity.DecryptedUPN}");
+                    }
+                    catch (RequestFailedException ex2) when (ex2.Status == 409)
+                    {
+                        _logger.LogWarning($"Entity with new RowKey already exists: {entity.OriginalEntity.PartitionKey}/{entity.NewEntity.RowKey}");
+                        errors++;
+                    }
+                    catch (Exception individualEx)
+                    {
+                        _logger.LogError(individualEx, "Error rotating row key for entity {PartitionKey}/{RowKey}",
+                            entity.OriginalEntity.PartitionKey, entity.OriginalEntity.RowKey);
+                        errors++;
+                    }
+                }
+            }
+
+            return (processed, errors);
+        }
+
+        // Helper classes
+        private class PartitionKeyRotationInfo
+        {
+            public TableEntity OriginalEntity { get; set; }
+            public TableEntity NewEntity { get; set; }
+            public string DecryptedUPN { get; set; }
+        }
+
+        private class RowKeyRotationInfo
+        {
+            public TableEntity OriginalEntity { get; set; }
+            public TableEntity NewEntity { get; set; }
+            public string DecryptedUPN { get; set; }
+        }
+
+        
 
         public async Task<bool> GetWebhookStateAsync()
         {
@@ -789,7 +1320,6 @@ namespace groveale.Services
             try
             {
 
-
                 var entity = new TableEntity("Webhook", "Pause")
                 {
                     { "IsPaused", isPaused }
@@ -818,6 +1348,35 @@ namespace groveale.Services
         {
             return copilotInteractionDailyAggregationsTableClient;
         }
+
+        public TableClient GetWeeklyCopilotInteractionTableClient()
+        {
+            return _userWeeklyTableClient;
+        }
+
+        public TableClient GetMonthlyCopilotInteractionTableClient()
+        {
+            return _userMonthlyTableClient;
+        }
+        public TableClient GetAllTimeCopilotInteractionTableClient()
+        {
+            return _userAllTimeTableClient;
+        }
+        public TableClient GetWeeklyAgentInteractionTableClient()
+        {
+            return _agentWeeklyTableClient;
+        }
+        public TableClient GetMonthlyAgentInteractionTableClient()
+        {
+            return _agentMonthlyTableClient;
+        }
+        public TableClient GetAllTimeAgentInteractionTableClient()
+        {
+            return _agentAllTimeTableClient;
+        }
+
+
+        #endregion
 
         #region From ScraperFunction
 
@@ -1148,7 +1707,7 @@ namespace groveale.Services
                 DailyAgentActivity = DailyUsageFromCount(DailyInteractionCountForApp(AppType.Agent)),
                 DailyAgentInteractions = DailyInteractionCountForApp(AppType.Agent),
                 DailyCopilotStudioActivity = DailyUsageFromCount(DailyInteractionCountForApp(AppType.CopilotStudio)),
-                DailyCopilotStudioInteractionCount = DailyInteractionCountForApp(AppType.CopilotStudio  ),
+                DailyCopilotStudioInteractionCount = DailyInteractionCountForApp(AppType.CopilotStudio),
 
                 DailyAllUpActivity = DailyUsageFromCount(DailyInteractionCountForApp(AppType.All))
             };
@@ -1573,6 +2132,21 @@ namespace groveale.Services
             }
 
             return users;
+        }
+
+        private async Task<string> GetActiveTimeFrame(string timeFrame)
+        {
+            // Read from the 
+            var query = _reportRefreshDateTableClient.QueryAsync<TableEntity>(TableClient.CreateQueryFilter($"PartitionKey eq 'ReportRefreshDate' and RowKey eq '{timeFrame}'"));
+
+            await foreach (var entity in query)
+            {
+                // Return the start date
+                return entity.GetString("StartDate") ?? string.Empty;
+            }
+
+            // If no entity found, return empty string
+            return string.Empty;
         }
 
         #endregion

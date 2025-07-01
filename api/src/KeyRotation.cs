@@ -50,10 +50,18 @@ public class KeyRotation
 
             // perform the key rotation logic
             _logger.LogInformation("Performing key rotation logic.");
+            // Perform the key rotation logic for recent daily tables (this is partition key swapping)
             await _azureTableService.RotateKeyRecentDailyTableValues(_azureTableService.GetCopilotAgentInteractionTableClient(), encryptionService, newEncryptionService);
             await _azureTableService.RotateKeyRecentDailyTableValues(_azureTableService.GetCopilotInteractionDailyAggregationsTableClient(), encryptionService, newEncryptionService);
 
-            // Todo once added, the weekly, monthly and alltime aggegations should also be rotated
+            // Perform the key rotation logic for time frame tables (this is row key swapping)
+            await _azureTableService.RotateKeyTimeFrameTableValues(_azureTableService.GetWeeklyCopilotInteractionTableClient(), encryptionService, newEncryptionService);
+            await _azureTableService.RotateKeyTimeFrameTableValues(_azureTableService.GetMonthlyCopilotInteractionTableClient(), encryptionService, newEncryptionService);
+            await _azureTableService.RotateKeyTimeFrameTableValues(_azureTableService.GetAllTimeCopilotInteractionTableClient(), encryptionService, newEncryptionService);
+            await _azureTableService.RotateKeyTimeFrameTableValues(_azureTableService.GetWeeklyAgentInteractionTableClient(), encryptionService, newEncryptionService);
+            await _azureTableService.RotateKeyTimeFrameTableValues(_azureTableService.GetMonthlyAgentInteractionTableClient(), encryptionService, newEncryptionService);
+            await _azureTableService.RotateKeyTimeFrameTableValues(_azureTableService.GetAllTimeAgentInteractionTableClient(), encryptionService, newEncryptionService);
+
 
             return new OkObjectResult("Key rotation prepared.");
         }
