@@ -18,7 +18,7 @@ namespace groveale
         }
 
         [Function("SubscribeToEvent")]
-        public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", "post")] HttpRequest req)
+        public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Admin, "get", "post")] HttpRequest req)
         {
             _logger.LogInformation("Subscribe to event function triggered.");
 

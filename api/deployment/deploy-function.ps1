@@ -415,9 +415,15 @@ try {
             --name $deployedFunctionName `
             --query 'masterKey' `
             --output tsv 2>$null
+
+
         
         if ([string]::IsNullOrEmpty($masterKey)) {
             $masterKey = "Unable to retrieve"
+        }
+        else {
+            # Action when all if and elseif conditions are false
+            Write-Status "Master key retrieved successfully."
         }
     }
     catch {
@@ -460,22 +466,35 @@ try {
     Write-Step "Setting Up Audit Subscription via PowerShell"
     Write-Host "==================================" -ForegroundColor Cyan
 
-    $webhookAddressURLEncoded = [System.Web.HttpUtility]::UrlEncode("https://$hostname/api/ReceiveEvents")
+    # Add master key to the webhook endpoint for authentication
+    if ($masterKey -ne "Unable to retrieve") {
+        $webhookUrl = "https://$hostname/api/ReceiveEvents?code=$masterKey"
+        Write-Status "Using master key for webhook authentication"
+
+        $response = Invoke-RestMethod -Uri $subscriptionUrl -Method Post
+        Write-Host "Subscription setup response:"
+        Write-Host $response
+
+        Write-Host "`nYou can now test Copilot interactions are coming through by triggering an event in M365 Copilot"
+        Write-Host ""
+        Write-Host "`n=== Test Copilot Interactions are coming through ==="
+        Write-Host "1. Please wait 5 minutes to allow the event to be processed (from your Copilot interaction testing)."
+        Write-Host "2. Visit the following URL to check the results:"
+        Write-Host "   https://$hostname/api/GetNotifications"
+        Write-Host ""
+        Write-Host "If you do not see your interaction, something has gone wrong. Please check the Azure Function logs for errors."
+
+
+    }
+    else {
+        $webhookUrl = "https://$hostname/api/ReceiveEvents"
+        Write-Warning "Master key not available - webhook endpoint may require manual subscription setup"
+    }
+    
+    $webhookAddressURLEncoded = [System.Web.HttpUtility]::UrlEncode($webhookUrl)
     $subscriptionUrl = "https://$hostname/api/SubscribeToEvent?contentType=Audit.General&webhookAddress=$webhookAddressURLEncoded"
 
-    $response = Invoke-RestMethod -Uri $subscriptionUrl -Method Post
-    Write-Host "Subscription setup response:"
-    Write-Host $response
-
-    Write-Host "`nYou can now test Copilot interactions are coming through by triggering an event in M365 Copilot"
-    Write-Host ""
-    Write-Host "`n=== Test Copilot Interactions are coming through ==="
-    Write-Host "1. Please wait 5 minutes to allow the event to be processed (from your Copilot interaction testing)."
-    Write-Host "2. Visit the following URL to check the results:"
-    Write-Host "   https://$hostname/api/GetNotifications"
-    Write-Host ""
-    Write-Host "If you do not see your interaction, something has gone wrong. Please check the Azure Function logs for errors."
-
+    
     Write-Host ""
     Write-Status "Deployment completed successfully! 🎉" "Green"
 

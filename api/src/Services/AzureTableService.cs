@@ -1276,16 +1276,16 @@ namespace groveale.Services
         // Helper classes
         private class PartitionKeyRotationInfo
         {
-            public TableEntity OriginalEntity { get; set; }
-            public TableEntity NewEntity { get; set; }
-            public string DecryptedUPN { get; set; }
+            public required TableEntity OriginalEntity { get; set; }
+            public required TableEntity NewEntity { get; set; }
+            public required string DecryptedUPN { get; set; }
         }
 
         private class RowKeyRotationInfo
         {
-            public TableEntity OriginalEntity { get; set; }
-            public TableEntity NewEntity { get; set; }
-            public string DecryptedUPN { get; set; }
+            public required TableEntity OriginalEntity { get; set; }
+            public required TableEntity NewEntity { get; set; }
+            public required string DecryptedUPN { get; set; }
         }
 
         
@@ -2136,17 +2136,44 @@ namespace groveale.Services
 
         private async Task<string> GetActiveTimeFrame(string timeFrame)
         {
-            // Read from the 
-            var query = _reportRefreshDateTableClient.QueryAsync<TableEntity>(TableClient.CreateQueryFilter($"PartitionKey eq 'ReportRefreshDate' and RowKey eq '{timeFrame}'"));
-
-            await foreach (var entity in query)
+            try
             {
-                // Return the start date
-                return entity.GetString("StartDate") ?? string.Empty;
-            }
+                // Use direct entity lookup instead of query for better performance
+                var response = await _reportRefreshDateTableClient.GetEntityIfExistsAsync<TableEntity>("ReportRefreshDate", timeFrame);
+                
+                if (response.HasValue)
+                {
+                    var startDate = response.Value.GetString("StartDate");
+                    if (!string.IsNullOrEmpty(startDate))
+                    {
+                        return startDate;
+                    }
+                    
+                    _logger.LogWarning($"StartDate is null or empty for timeFrame {timeFrame}");
+                }
+                else
+                {
+                    _logger.LogWarning($"No active time frame entity found for {timeFrame}");
+                }
 
-            // If no entity found, return empty string
-            return string.Empty;
+                // Return empty string if no valid data found
+                return string.Empty;
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404)
+            {
+                _logger.LogWarning($"No active time frame found for {timeFrame} (404). Returning empty string.");
+                return string.Empty;
+            }
+            catch (RequestFailedException ex)
+            {
+                _logger.LogError(ex, $"Request failed while retrieving active time frame for {timeFrame}. Status: {ex.Status}");
+                return string.Empty; // Don't throw, return empty to allow fallback logic
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Unexpected error retrieving active time frame for {timeFrame}");
+                return string.Empty; // Don't throw, return empty to allow fallback logic
+            }
         }
 
         #endregion
