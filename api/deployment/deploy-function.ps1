@@ -12,6 +12,7 @@ param(
     [string]$AuthGuid = "<your-auth-guid>",
     [string]$SPO_SiteId = "<your-spo-site-id>",
     [string]$SPO_ListId = "<your-spo-list-id>",
+    [string]$UserObjectId = "<your-user-object-id>", # Object ID of the service account to grant Key Vault access
     [string]$InactivityDays = 14 # Optional, default is 14 days
 )
 
@@ -132,6 +133,7 @@ try {
         spoSiteId=$SPO_SiteId `
         spoListId=$SPO_ListId `
         inactivityDays=$InactivityDays `
+        userObjectId=$UserObjectId `
         --query 'properties.outputs' `
         --output json | ConvertFrom-Json
 
@@ -148,6 +150,9 @@ try {
 
     # Managed identity details
     $managedIdentityObjectId = $deploymentOutput.functionAppPrincipalId.value
+    
+    # Key Vault details (assuming your Bicep template outputs the Key Vault name)
+    $keyVaultName = $deploymentOutput.keyVaultName.value
 
     # Connect to Graph
     try {
@@ -424,6 +429,25 @@ try {
         else {
             # Action when all if and elseif conditions are false
             Write-Status "Master key retrieved successfully."
+            
+            # Store master key in Key Vault
+            try {
+                Write-Status "Storing master key in Key Vault..."
+                az keyvault secret set `
+                    --vault-name $keyVaultName `
+                    --name "FunctionAppMasterKey" `
+                    --value $masterKey `
+                    --output none
+                
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Status "Master key stored in Key Vault successfully"
+                } else {
+                    Write-Warning "Failed to store master key in Key Vault"
+                }
+            }
+            catch {
+                Write-Warning "Failed to store master key in Key Vault: $($_.Exception.Message)"
+            }
         }
     }
     catch {
@@ -450,6 +474,8 @@ try {
     Write-Status "Function App Name: $deployedFunctionName"
     Write-Status "Function App URL: https://$hostname"
     Write-Status "Master Key: $masterKey"
+    Write-Status "Key Vault: $keyVaultName"
+    Write-Status "Master Key Secret: FunctionAppMasterKey (stored in Key Vault)"
     Write-Host ""
     
     if ($functions.Count -gt 0) {
@@ -468,8 +494,12 @@ try {
 
     # Add master key to the webhook endpoint for authentication
     if ($masterKey -ne "Unable to retrieve") {
-        $webhookUrl = "https://$hostname/api/ReceiveEvents?code=$masterKey"
+        $webhookUrl = "https://$hostname/api/ReceiveEvents"
+        $webhookAddressURLEncoded = [System.Web.HttpUtility]::UrlEncode($webhookUrl)
         Write-Status "Using master key for webhook authentication"
+
+        $subscriptionUrl = "https://$hostname/api/SubscribeToEvent?contentType=Audit.General&webhookAddress=$webhookAddressURLEncoded&code=$masterKey"
+
 
         $response = Invoke-RestMethod -Uri $subscriptionUrl -Method Post
         Write-Host "Subscription setup response:"
@@ -488,11 +518,9 @@ try {
     }
     else {
         $webhookUrl = "https://$hostname/api/ReceiveEvents"
-        Write-Warning "Master key not available - webhook endpoint may require manual subscription setup"
+        Write-Warning "Master key not available - manual subscription setup is required"
     }
     
-    $webhookAddressURLEncoded = [System.Web.HttpUtility]::UrlEncode($webhookUrl)
-    $subscriptionUrl = "https://$hostname/api/SubscribeToEvent?contentType=Audit.General&webhookAddress=$webhookAddressURLEncoded"
 
     
     Write-Host ""
