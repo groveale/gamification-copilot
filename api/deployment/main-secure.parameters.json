@@ -1,0 +1,83 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "East US"
+    },
+    "runtime": {
+      "value": "dotnet-isolated"
+    },
+    "storageAccountType": {
+      "value": "Standard_LRS"
+    },
+    "appServicePlanSku": {
+      "value": "P1v2"
+    },
+    "applicationName": {
+      "value": "copilotgamify"
+    },
+    "enableManagedIdentity": {
+      "value": true
+    },
+    "keyVaultSku": {
+      "value": "standard"
+    },
+    "encryptionKey": {
+      "value": "YOUR_ENCRYPTION_KEY_HERE"
+    },
+    "keyVaultEncryptionKeySecretName": {
+      "value": "email-encryption-key"
+    },
+    "tenantId": {
+      "value": "YOUR_TENANT_ID_HERE"
+    },
+    "authGuid": {
+      "value": "YOUR_AUTH_GUID_HERE"
+    },
+    "spoSiteId": {
+      "value": "YOUR_SPO_SITE_ID_HERE"
+    },
+    "spoFieldName": {
+      "value": "UPN"
+    },
+    "spoListId": {
+      "value": "YOUR_SPO_LIST_ID_HERE"
+    },
+    "tags": {
+      "value": {
+        "Application": "CopilotGamification",
+        "Environment": "Production",
+        "ManagedBy": "Bicep",
+        "Security": "HighSecurity"
+      }
+    },
+    "inactivityDays": {
+      "value": "30"
+    },
+    "userObjectId": {
+      "value": "YOUR_USER_OBJECT_ID_HERE"
+    },
+    "apimSku": {
+      "value": "Developer"
+    },
+    "apimPublisherEmail": {
+      "value": "admin@yourcompany.com"
+    },
+    "apimPublisherName": {
+      "value": "Your Company Name"
+    },
+    "vnetAddressPrefix": {
+      "value": "10.0.0.0/16"
+    },
+    "functionSubnetAddressPrefix": {
+      "value": "10.0.1.0/24"
+    },
+    "apimSubnetAddressPrefix": {
+      "value": "10.0.2.0/24"
+    },
+    "privateEndpointSubnetAddressPrefix": {
+      "value": "10.0.3.0/24"
+    }
+  }
+}
