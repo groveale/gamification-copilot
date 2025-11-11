@@ -12,6 +12,7 @@ namespace groveale.Services
         string SPOFieldName { get; }
         string SPOListId { get; }
         string ReminderDays { get; }
+        bool IsEmailListExclusive { get; }
         
     }
 
@@ -28,6 +29,10 @@ namespace groveale.Services
         public string SPOFieldName => Environment.GetEnvironmentVariable("SPO:FieldName");
         public string SPOListId => Environment.GetEnvironmentVariable("SPO:ListId");
         public string ReminderDays => Environment.GetEnvironmentVariable("ReminderDays") ?? "14"; // Default to 14 days if not set
+
+        // If true, the email list is exclusive (inclusion list). If false, it's an exclusion list.
+        // Default to false (exclusion list) to maintain backward compatibility
+        public bool IsEmailListExclusive => bool.TryParse(Environment.GetEnvironmentVariable("IsEmailListExclusive"), out var result) ? result : false;
 
     }
 }

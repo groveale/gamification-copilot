@@ -3,7 +3,7 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "location": {
-      "value": "East US"
+      "value": "West Europe"
     },
     "runtime": {
       "value": "dotnet-isolated"
@@ -11,11 +11,8 @@
     "storageAccountType": {
       "value": "Standard_LRS"
     },
-    "appServicePlanSku": {
-      "value": "P1v2"
-    },
     "applicationName": {
-      "value": "copilotgamify"
+      "value": "copilotgamifysc"
     },
     "enableManagedIdentity": {
       "value": true
@@ -24,25 +21,25 @@
       "value": "standard"
     },
     "encryptionKey": {
-      "value": "YOUR_ENCRYPTION_KEY_HERE"
+      "value": "SrSIjIWFF+DwFu5PpdXkH7laN9HlEBuUxn5TpUDEpL0="
     },
     "keyVaultEncryptionKeySecretName": {
       "value": "email-encryption-key"
     },
     "tenantId": {
-      "value": "YOUR_TENANT_ID_HERE"
+      "value": "d8464949-bb1d-476f-bbe8-a46293833f6d"
     },
     "authGuid": {
-      "value": "YOUR_AUTH_GUID_HERE"
+      "value": "0623ba67-0cf2-426a-8f35-8c2670468eeb"
     },
     "spoSiteId": {
-      "value": "YOUR_SPO_SITE_ID_HERE"
+      "value": "6e34d238-5c79-479d-9c09-5e5922c87490"
     },
     "spoFieldName": {
       "value": "UPN"
     },
     "spoListId": {
-      "value": "YOUR_SPO_LIST_ID_HERE"
+      "value": "Bdb74bbdc-72e9-4906-b3de-e6dc2b9ce16b"
     },
     "tags": {
       "value": {
@@ -56,7 +53,7 @@
       "value": "30"
     },
     "userObjectId": {
-      "value": "YOUR_USER_OBJECT_ID_HERE"
+      "value": "eb239c8c-4bfd-485e-992c-8dc1f42f5278"
     },
     "apimSku": {
       "value": "Developer"

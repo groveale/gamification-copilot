@@ -1,3 +1,42 @@
+// NSG for APIM subnet
+var apimNsgName = 'nsg-apim-${applicationName}'
+resource apimSubnetNsg 'Microsoft.Network/networkSecurityGroups@2023-05-01' = {
+  name: apimNsgName
+  location: location
+  tags: tags
+  properties: {
+    securityRules: [
+      // Allow all outbound (customize as needed)
+      {
+        name: 'AllowAllOutbound'
+        properties: {
+          priority: 100
+          protocol: '*'
+          access: 'Allow'
+          direction: 'Outbound'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '*'
+        }
+      }
+      // Allow all inbound (customize as needed)
+      {
+        name: 'AllowAllInbound'
+        properties: {
+          priority: 200
+          protocol: '*'
+          access: 'Allow'
+          direction: 'Inbound'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '*'
+        }
+      }
+    ]
+  }
+}
 @description('The location for all resources')
 param location string = resourceGroup().location
 
@@ -9,9 +48,62 @@ param runtime string = 'dotnet-isolated'
 @allowed(['Standard_LRS', 'Standard_GRS', 'Standard_RAGRS', 'Premium_LRS'])
 param storageAccountType string = 'Standard_LRS'
 
-@description('App Service Plan SKU - must be Premium or higher for VNet integration')
-@allowed(['P1v2', 'P2v2', 'P3v2', 'P1v3', 'P2v3', 'P3v3'])
-param appServicePlanSku string = 'P1v2'
+
+@description('Virtual Network address prefix')
+param vnetAddressPrefix string = '10.0.0.0/16'
+
+@description('Function App subnet address prefix')
+param functionSubnetAddressPrefix string = '10.0.1.0/24'
+
+@description('API Management subnet address prefix')
+param apimSubnetAddressPrefix string = '10.0.2.0/24'
+
+var vnetName = 'vnet-${applicationName}'
+var functionSubnetName = 'snet-function'
+var apimSubnetName = 'snet-apim'
+// Virtual Network for Flex Consumption VNet integration (with APIM subnet)
+resource virtualNetwork 'Microsoft.Network/virtualNetworks@2023-05-01' = {
+  name: vnetName
+  location: location
+  tags: tags
+  properties: {
+    addressSpace: {
+      addressPrefixes: [
+        vnetAddressPrefix
+      ]
+    }
+    subnets: [
+      {
+        name: functionSubnetName
+        properties: {
+          addressPrefix: functionSubnetAddressPrefix
+          delegations: [
+            {
+              name: 'delegation'
+              properties: {
+                serviceName: 'Microsoft.Web/serverFarms'
+              }
+            }
+          ]
+          serviceEndpoints: [
+            {
+              service: 'Microsoft.KeyVault'
+            }
+          ]
+        }
+      }
+      {
+        name: apimSubnetName
+        properties: {
+          addressPrefix: apimSubnetAddressPrefix
+          networkSecurityGroup: {
+            id: apimSubnetNsg.id
+          }
+        }
+      }
+    ]
+  }
+}
 
 @description('Application name for resource naming')
 param applicationName string
@@ -67,250 +159,18 @@ param apimPublisherEmail string
 @description('API Management publisher name')
 param apimPublisherName string
 
-@description('Virtual Network address prefix')
-param vnetAddressPrefix string = '10.0.0.0/16'
-
-@description('Function App subnet address prefix')
-param functionSubnetAddressPrefix string = '10.0.1.0/24'
-
-@description('API Management subnet address prefix')
-param apimSubnetAddressPrefix string = '10.0.2.0/24'
-
 @description('Private endpoint subnet address prefix')
 param privateEndpointSubnetAddressPrefix string = '10.0.3.0/24'
 
-// Resource names
 var storageAccountName = 'store${applicationName}'
 var appServicePlanName = 'asp-${applicationName}'
 var keyVaultName = 'kv-${applicationName}'
 var functionAppName = 'func-${applicationName}'
 var appInsightsName = 'appi-${applicationName}'
-var vnetName = 'vnet-${applicationName}'
 var apimName = 'apim-${applicationName}'
-var nsgName = 'nsg-${applicationName}'
-var functionNsgName = 'nsg-func-${applicationName}'
-var functionSubnetName = 'snet-function'
-var apimSubnetName = 'snet-apim'
-var privateEndpointSubnetName = 'snet-pe'
 
-// Network Security Group for Function App subnet
-resource functionNetworkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2023-05-01' = {
-  name: functionNsgName
-  location: location
-  tags: tags
-  properties: {
-    securityRules: [
-      // Allow outbound to M365 Management Activity API
-      {
-        name: 'Allow-M365ManagementActivity-Outbound'
-        properties: {
-          priority: 100
-          protocol: 'Tcp'
-          access: 'Allow'
-          direction: 'Outbound'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: 'M365ManagementActivityApi'
-          destinationPortRange: '443'
-        }
-      }
-      // Allow outbound to Azure Active Directory (required for M365 Management Activity API authentication)
-      {
-        name: 'Allow-AzureActiveDirectory-Outbound'
-        properties: {
-          priority: 110
-          protocol: 'Tcp'
-          access: 'Allow'
-          direction: 'Outbound'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: 'AzureActiveDirectory'
-          destinationPortRange: '443'
-        }
-      }
-      // Allow outbound to Azure services (Storage, Key Vault, Microsoft Graph for SharePoint, etc.)
-      {
-        name: 'Allow-Azure-Services-Outbound'
-        properties: {
-          priority: 120
-          protocol: 'Tcp'
-          access: 'Allow'
-          direction: 'Outbound'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: 'AzureCloud'
-          destinationPortRange: '443'
-        }
-      }
-      // Deny all other outbound traffic
-      {
-        name: 'Deny-All-Outbound'
-        properties: {
-          priority: 4096
-          protocol: '*'
-          access: 'Deny'
-          direction: 'Outbound'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '*'
-        }
-      }
-    ]
-  }
-}
 
-// Network Security Group for API Management subnet
-resource apimNetworkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2023-05-01' = {
-  name: nsgName
-  location: location
-  tags: tags
-  properties: {
-    securityRules: [
-      // Allow inbound from M365 Management Activity API
-      {
-        name: 'Allow-M365-ManagementActivity-Inbound'
-        properties: {
-          priority: 100
-          protocol: 'Tcp'
-          access: 'Allow'
-          direction: 'Inbound'
-          sourceAddressPrefix: 'M365ManagementActivityApiWebhook'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '443'
-        }
-      }
-      // Allow inbound from Power Automate / Logic Apps
-      {
-        name: 'Allow-PowerAutomate-Inbound'
-        properties: {
-          priority: 105
-          protocol: 'Tcp'
-          access: 'Allow'
-          direction: 'Inbound'
-          sourceAddressPrefix: 'PowerPlatformInfra'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '443'
-        }
-      }
-      // API Management management endpoint
-      {
-        name: 'Allow-APIM-Management'
-        properties: {
-          priority: 110
-          protocol: 'Tcp'
-          access: 'Allow'
-          direction: 'Inbound'
-          sourceAddressPrefix: 'ApiManagement'
-          sourcePortRange: '*'
-          destinationAddressPrefix: 'VirtualNetwork'
-          destinationPortRange: '3443'
-        }
-      }
-      // Allow outbound to Function App subnet
-      {
-        name: 'Allow-Function-Outbound'
-        properties: {
-          priority: 100
-          protocol: 'Tcp'
-          access: 'Allow'
-          direction: 'Outbound'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: functionSubnetAddressPrefix
-          destinationPortRange: '443'
-        }
-      }
-      // Allow outbound to Azure services
-      {
-        name: 'Allow-Azure-Services-Outbound'
-        properties: {
-          priority: 110
-          protocol: 'Tcp'
-          access: 'Allow'
-          direction: 'Outbound'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: 'AzureCloud'
-          destinationPortRange: '443'
-        }
-      }
-      // Deny all other inbound traffic
-      {
-        name: 'Deny-All-Inbound'
-        properties: {
-          priority: 4096
-          protocol: '*'
-          access: 'Deny'
-          direction: 'Inbound'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '*'
-        }
-      }
-    ]
-  }
-}
-
-// Virtual Network
-resource virtualNetwork 'Microsoft.Network/virtualNetworks@2023-05-01' = {
-  name: vnetName
-  location: location
-  tags: tags
-  properties: {
-    addressSpace: {
-      addressPrefixes: [
-        vnetAddressPrefix
-      ]
-    }
-    subnets: [
-      {
-        name: functionSubnetName
-        properties: {
-          addressPrefix: functionSubnetAddressPrefix
-          networkSecurityGroup: {
-            id: functionNetworkSecurityGroup.id
-          }
-          delegations: [
-            {
-              name: 'delegation'
-              properties: {
-                serviceName: 'Microsoft.Web/serverFarms'
-              }
-            }
-          ]
-          serviceEndpoints: [
-            {
-              service: 'Microsoft.Storage'
-            }
-            {
-              service: 'Microsoft.KeyVault'
-            }
-          ]
-        }
-      }
-      {
-        name: apimSubnetName
-        properties: {
-          addressPrefix: apimSubnetAddressPrefix
-          networkSecurityGroup: {
-            id: apimNetworkSecurityGroup.id
-          }
-        }
-      }
-      {
-        name: privateEndpointSubnetName
-        properties: {
-          addressPrefix: privateEndpointSubnetAddressPrefix
-          privateEndpointNetworkPolicies: 'Disabled'
-        }
-      }
-    ]
-  }
-}
+// (Removed: Network Security Groups and Virtual Network for Flex Consumption)
 
 // Application Insights
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
@@ -409,33 +269,38 @@ resource encryptionKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   }
 }
 
-// App Service Plan (Premium tier required for VNet integration)
+// App Service Plan (Flex Consumption)
 resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
   name: appServicePlanName
   location: location
   tags: tags
   sku: {
-    name: appServicePlanSku
+    name: 'FC1'
+    tier: 'FlexConsumption'
   }
+  kind: 'functionapp'
   properties: {
-    reserved: runtime == 'node' || runtime == 'python'
+    maximumElasticWorkerCount: 1
+    perSiteScaling: false
+    isSpot: false
   }
 }
 
 // Storage connection strings
 var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storageAccount.listKeys().keys[0].value}'
 
-// Function App with VNet integration
+// Function App (Flex Consumption with VNet integration)
 resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
   name: functionAppName
   location: location
   tags: tags
   kind: 'functionapp'
-  identity: { type: 'SystemAssigned' }
+  identity: {
+    type: 'SystemAssigned'
+  }
   properties: {
     serverFarmId: appServicePlan.id
     virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, functionSubnetName)
-    vnetRouteAllEnabled: true
     siteConfig: {
       appSettings: [
         {
@@ -530,40 +395,16 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
           name: 'ReminderDays'
           value: inactivityDays
         }
-        // Restrict outbound access to only necessary services
-        {
-          name: 'WEBSITE_VNET_ROUTE_ALL'
-          value: '1'
-        }
       ]
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
       http20Enabled: true
       use32BitWorkerProcess: false
-      ipSecurityRestrictions: [
-        // Only allow traffic from APIM subnet
-        {
-          vnetSubnetResourceId: resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, apimSubnetName)
-          action: 'Allow'
-          priority: 100
-          name: 'AllowAPIMSubnet'
-        }
-        // Deny all other traffic
-        {
-          ipAddress: '0.0.0.0/0'
-          action: 'Deny'
-          priority: 2147483647
-          name: 'DenyAll'
-        }
-      ]
     }
     httpsOnly: true
     clientAffinityEnabled: false
-    publicNetworkAccess: 'Disabled' // Disable public access
+    publicNetworkAccess: 'Enabled'
   }
-  dependsOn: [
-    virtualNetwork
-  ]
 }
 
 // API Management

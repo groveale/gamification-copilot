@@ -59,15 +59,16 @@
     .\deploy-secure.ps1 -ResourceGroupName "rg-copilot-secure" -Location "East US" -ApplicationName "copilot-gamify" -EncryptionKey "your-encryption-key" -TenantId "your-tenant-id" -AuthGuid "your-auth-guid" -SpoSiteId "your-site-id" -SpoListId "your-list-id" -UserObjectId "your-user-object-id" -ApimPublisherEmail "admin@contoso.com" -ApimPublisherName "Contoso Admin" -InactivityDays 30
 #>
 
-# Deploy Secure Azure Function App with APIM
-# This script deploys a secure infrastructure with VNet integration
+
+# Deploy Secure Azure Function App with APIM (Azure CLI version)
+# This script deploys a secure infrastructure with VNet integration using Azure CLI
 
 param(
     [Parameter(Mandatory=$true)]
     [string]$ResourceGroupName,
     
     [Parameter(Mandatory=$false)]
-    [string]$Location = "East US",
+    [string]$Location = "West Europe",
     
     [Parameter(Mandatory=$false)]
     [string]$ApplicationName,
@@ -103,24 +104,21 @@ param(
     [string]$ParametersFile = $null
 )
 
-# Set error handling
+
 $ErrorActionPreference = "Stop"
 
-Write-Host "Starting secure deployment of Copilot Gamification infrastructure..." -ForegroundColor Green
+Write-Host "Starting secure deployment of Copilot Gamification infrastructure (Azure CLI version)..." -ForegroundColor Green
 
 # Validate parameters
 if (-not $ParametersFile) {
-    # If no parameters file, validate that all required inline parameters are provided
     $requiredParams = @('ApplicationName', 'EncryptionKey', 'TenantId', 'AuthGuid', 'SpoSiteId', 'SpoListId', 'UserObjectId', 'ApimPublisherEmail', 'ApimPublisherName')
     $missingParams = @()
-    
     foreach ($param in $requiredParams) {
         $value = Get-Variable -Name $param -ValueOnly -ErrorAction SilentlyContinue
         if (-not $value) {
             $missingParams += $param
         }
     }
-    
     if ($missingParams.Count -gt 0) {
         Write-Host "ERROR: When not using a parameters file, the following parameters are required:" -ForegroundColor Red
         Write-Host "Missing parameters: $($missingParams -join ', ')" -ForegroundColor Red
@@ -130,75 +128,78 @@ if (-not $ParametersFile) {
 }
 
 try {
-    # Check if logged in to Azure
-    $context = Get-AzContext
-    if (!$context) {
-        Write-Host "Please login to Azure first using Connect-AzAccount" -ForegroundColor Red
+    # Check if logged in to Azure CLI
+    try {
+        $account = az account show | ConvertFrom-Json
+        Write-Host "Current Azure CLI Account: $($account.user.name)" -ForegroundColor Yellow
+    } catch {
+        Write-Host "Not logged in to Azure CLI. Please run 'az login' first." -ForegroundColor Red
         exit 1
     }
 
-    Write-Host "Current Azure Context: $($context.Account.Id)" -ForegroundColor Yellow
-
-    # Create resource group if it doesn't exist
-    $rg = Get-AzResourceGroup -Name $ResourceGroupName -ErrorAction SilentlyContinue
-    if (!$rg) {
-        Write-Host "Creating resource group: $ResourceGroupName" -ForegroundColor Yellow
-        New-AzResourceGroup -Name $ResourceGroupName -Location $Location
+    # Create resource group if it doesn't exist using Azure CLI
+    $rgExists = az group exists --name $ResourceGroupName | ConvertFrom-Json
+    if (-not $rgExists) {
+        Write-Host "Creating resource group: $ResourceGroupName using Azure CLI" -ForegroundColor Yellow
+        az group create --name $ResourceGroupName --location $Location --output none
     } else {
         Write-Host "Resource group $ResourceGroupName already exists" -ForegroundColor Green
     }
 
-    # Deploy the infrastructure
-    Write-Host "Deploying secure infrastructure template..." -ForegroundColor Yellow
-    
+    # Deploy the infrastructure using Azure CLI
+    Write-Host "Deploying secure infrastructure template with Azure CLI..." -ForegroundColor Yellow
     $deploymentName = "copilot-gamify-secure-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-    
-    # Choose deployment method based on whether parameters file is provided
+
     if ($ParametersFile) {
         Write-Host "Using parameters file: $ParametersFile" -ForegroundColor Yellow
-        
-        # Verify parameters file exists
         if (-not (Test-Path $ParametersFile)) {
             Write-Host "Parameters file not found: $ParametersFile" -ForegroundColor Red
             exit 1
         }
-        
-        $deployment = New-AzResourceGroupDeployment -ResourceGroupName $ResourceGroupName -Name $deploymentName -TemplateFile ".\main-secure.bicep" -TemplateParameterFile $ParametersFile -Verbose
+        $deploymentOutput = az deployment group create `
+            --resource-group $ResourceGroupName `
+            --name $deploymentName `
+            --template-file "./main-secure.bicep" `
+            --parameters @$ParametersFile `
+            --query 'properties.outputs' `
+            --output json | ConvertFrom-Json
     } else {
         Write-Host "Using inline parameters..." -ForegroundColor Yellow
-        
-        $templateParams = @{
-            'location' = $Location
-            'applicationName' = $ApplicationName
-            'encryptionKey' = $EncryptionKey
-            'tenantId' = $TenantId
-            'authGuid' = $AuthGuid
-            'spoSiteId' = $SpoSiteId
-            'spoListId' = $SpoListId
-            'userObjectId' = $UserObjectId
-            'apimPublisherEmail' = $ApimPublisherEmail
-            'apimPublisherName' = $ApimPublisherName
-            'inactivityDays' = $InactivityDays
-        }
-
-        $deployment = New-AzResourceGroupDeployment -ResourceGroupName $ResourceGroupName -Name $deploymentName -TemplateFile ".\main-secure.bicep" -TemplateParameterObject $templateParams -Verbose
+        $paramString = @(
+            "location=$Location"
+            "applicationName=$ApplicationName"
+            "encryptionKey=$EncryptionKey"
+            "tenantId=$TenantId"
+            "authGuid=$AuthGuid"
+            "spoSiteId=$SpoSiteId"
+            "spoListId=$SpoListId"
+            "userObjectId=$UserObjectId"
+            "apimPublisherEmail=$ApimPublisherEmail"
+            "apimPublisherName=$ApimPublisherName"
+            "inactivityDays=$InactivityDays"
+        )
+        $deploymentOutput = az deployment group create `
+            --resource-group $ResourceGroupName `
+            --name $deploymentName `
+            --template-file "./main-secure.bicep" `
+            --parameters $paramString `
+            --query 'properties.outputs' `
+            --output json | ConvertFrom-Json
     }
 
-    if ($deployment.ProvisioningState -eq "Succeeded") {
+    if ($deploymentOutput) {
         Write-Host "Infrastructure deployment completed successfully!" -ForegroundColor Green
-        
-        # Output important information
         Write-Host "`n=== Deployment Outputs ===" -ForegroundColor Cyan
-        Write-Host "Function App Name: $($deployment.Outputs.functionAppName.Value)" -ForegroundColor White
-        Write-Host "API Management Gateway URL: $($deployment.Outputs.apiManagementGatewayUrl.Value)" -ForegroundColor White
-        Write-Host "API Management Public IP: $($deployment.Outputs.apiManagementPublicIP.Value)" -ForegroundColor White
-        Write-Host "Key Vault Name: $($deployment.Outputs.keyVaultName.Value)" -ForegroundColor White
-        Write-Host "Storage Account Name: $($deployment.Outputs.storageAccountName.Value)" -ForegroundColor White
-        Write-Host "VNet Name: $($deployment.Outputs.vnetName.Value)" -ForegroundColor White
+        Write-Host "Function App Name: $($deploymentOutput.functionAppName.value)" -ForegroundColor White
+        Write-Host "API Management Gateway URL: $($deploymentOutput.apiManagementGatewayUrl.value)" -ForegroundColor White
+        Write-Host "API Management Public IP: $($deploymentOutput.apiManagementPublicIP.value)" -ForegroundColor White
+        Write-Host "Key Vault Name: $($deploymentOutput.keyVaultName.value)" -ForegroundColor White
+        Write-Host "Storage Account Name: $($deploymentOutput.storageAccountName.value)" -ForegroundColor White
+        Write-Host "VNet Name: $($deploymentOutput.vnetName.value)" -ForegroundColor White
 
         Write-Host "`n=== Next Steps ===" -ForegroundColor Cyan
-        Write-Host "1. Deploy your Function App code to: $($deployment.Outputs.functionAppName.Value)" -ForegroundColor White
-        Write-Host "2. Configure webhook URL in M365: $($deployment.Outputs.apiManagementGatewayUrl.Value)/api/ReceiveEvents" -ForegroundColor White
+        Write-Host "1. Deploy your Function App code to: $($deploymentOutput.functionAppName.value)" -ForegroundColor White
+        Write-Host "2. Configure webhook URL in M365: $($deploymentOutput.apiManagementGatewayUrl.value)/api/ReceiveEvents" -ForegroundColor White
         Write-Host "3. Get APIM subscription key from Azure portal for webhook authentication" -ForegroundColor White
         Write-Host "4. Test connectivity through the APIM gateway only" -ForegroundColor White
 
@@ -209,9 +210,8 @@ try {
         Write-Host "✓ NSG rules restrict traffic to M365 service tags" -ForegroundColor Green
         Write-Host "✓ Storage and Key Vault restricted to VNet" -ForegroundColor Green
         Write-Host "✓ All communication over HTTPS with TLS 1.2+" -ForegroundColor Green
-
     } else {
-        Write-Host "Deployment failed with state: $($deployment.ProvisioningState)" -ForegroundColor Red
+        Write-Host "Deployment failed!" -ForegroundColor Red
         exit 1
     }
 

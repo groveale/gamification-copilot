@@ -9,10 +9,6 @@ param runtime string = 'dotnet-isolated'
 @allowed(['Standard_LRS', 'Standard_GRS', 'Standard_RAGRS', 'Premium_LRS'])
 param storageAccountType string = 'Standard_LRS'
 
-@description('App Service Plan SKU')
-@allowed(['Y1', 'B1', 'EP1', 'EP2', 'EP3', 'P1v2', 'P2v2', 'P3v2'])
-param appServicePlanSku string = 'Y1'
-
 @description('Application name for resource naming')
 param applicationName string
 
@@ -52,7 +48,7 @@ param tags object = {
 }
 
 @description('Enable public network access for storage account')
-param storagePublicNetworkAccess bool = true
+param storagePublicNetworkAccess bool = false
 
 @description('Enable blob public access for storage account')
 param allowBlobPublicAccess bool = false
@@ -69,14 +65,28 @@ param inactivityDays string
 @description('Object ID of the service account to grant Key Vault access - runs the flows')
 param userObjectId string
 
-@description('Determines if the email list is exclusive (inclusion list) or not (exclusion list). Default is false (exclusion list).')
-param isEmailListExclusive bool = false
+@description('Maximum instance count for Flex Consumption')
+param maximumInstanceCount int = 100
+
+@description('Instance memory in MB for Flex Consumption (2048, 4096)')
+@allowed([2048, 4096])
+param instanceMemoryMB int = 2048
+
+@description('Allowed IP addresses for inbound access restrictions')
+param allowedIpAddresses array = []
+
+@description('Allowed service tags for inbound access restrictions')
+param allowedServiceTags array = [
+  'AzureCloud'
+]
+
+@description('Allowed virtual networks for inbound access restrictions')
+param allowedVirtualNetworks array = []
 
 var storageAccountName = 'store${applicationName}'
-var appServicePlanName = 'asp-${applicationName}'
-var keyVaultName = 'kv-${applicationName}'
 var functionAppName = 'func-${applicationName}'
 var appInsightsName = 'appi-${applicationName}'
+var keyVaultName = 'kv-${applicationName}'
 
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = if (enableAppInsights) {
   name: appInsightsName
@@ -102,6 +112,8 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     minimumTlsVersion: 'TLS1_2'
     allowBlobPublicAccess: allowBlobPublicAccess
     publicNetworkAccess: storagePublicNetworkAccess ? 'Enabled' : 'Disabled'
+    allowSharedKeyAccess: false // Disable shared key access to force managed identity
+    defaultToOAuthAuthentication: true
     encryption: {
       services: {
         file: {
@@ -114,6 +126,10 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
         }
       }
       keySource: 'Microsoft.Storage'
+    }
+    networkAcls: {
+      defaultAction: storagePublicNetworkAccess ? 'Allow' : 'Deny'
+      bypass: 'AzureServices'
     }
   }
 }
@@ -146,22 +162,21 @@ resource encryptionKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   }
 }
 
-resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
-  name: appServicePlanName
+// Flex Consumption plan
+resource flexConsumptionPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
+  name: 'flex-${applicationName}'
   location: location
   tags: tags
   sku: {
-    name: appServicePlanSku
+    name: 'FC1'
+    tier: 'FlexConsumption'
   }
   properties: {
     reserved: runtime == 'node' || runtime == 'python'
   }
 }
 
-// Add these variables to generate the connection strings
-var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storageAccount.listKeys().keys[0].value}'
-
-resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
+resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   name: functionAppName
   location: location
   tags: tags
@@ -169,7 +184,26 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
   dependsOn: enableAppInsights ? [appInsights] : []
   identity: { type: 'SystemAssigned' }
   properties: {
-    serverFarmId: appServicePlan.id
+    serverFarmId: flexConsumptionPlan.id
+    functionAppConfig: {
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          value: '${storageAccount.properties.primaryEndpoints.blob}deployments'
+          authentication: {
+            type: 'SystemAssignedIdentity'
+          }
+        }
+      }
+      scaleAndConcurrency: {
+        maximumInstanceCount: maximumInstanceCount
+        instanceMemoryMB: instanceMemoryMB
+      }
+      runtime: {
+        name: runtime
+        version: runtime == 'dotnet-isolated' ? '8.0' : (runtime == 'node' ? '20' : (runtime == 'python' ? '3.11' : '17'))
+      }
+    }
     siteConfig: {
       appSettings: [
         {
@@ -184,30 +218,26 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
           name: 'ApplicationInsightsAgent_EXTENSION_VERSION'
           value: '~3'
         }
-        // Add these required connection strings for Consumption plan
+        // Managed Identity configuration for storage
         {
-          name: 'AzureWebJobsStorage'
-          value: storageConnectionString
+          name: 'AzureWebJobsStorage__blobServiceUri'
+          value: storageAccount.properties.primaryEndpoints.blob
         }
         {
-          name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING'
-          value: storageConnectionString
+          name: 'AzureWebJobsStorage__queueServiceUri'
+          value: storageAccount.properties.primaryEndpoints.queue
         }
         {
-          name: 'AzureWebJobsStorage__credential'
-          value: 'managedidentity'
-        }
-        {
-          name: 'AzureWebJobsStorage__accountName'
-          value: storageAccount.name
+          name: 'AzureWebJobsStorage__tableServiceUri'
+          value: storageAccount.properties.primaryEndpoints.table
         }
         {
           name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING__credential'
           value: 'managedidentity'
         }
         {
-          name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING__accountName'
-          value: storageAccount.name
+          name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING__blobServiceUri'
+          value: storageAccount.properties.primaryEndpoints.blob
         }
         {
           name: 'WEBSITE_CONTENTSHARE'
@@ -239,7 +269,7 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
         }
         {
           name: 'StorageAccountUri'
-          value: 'https://${storageAccount.name}.table.core.windows.net/'
+          value: storageAccount.properties.primaryEndpoints.table
         }
         {
           name: 'KeyVault:Url'
@@ -265,10 +295,6 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
           name: 'ReminderDays'
           value: inactivityDays
         }
-        {
-          name: 'IsEmailListExclusive'
-          value: string(isEmailListExclusive)
-        }
       ]
       ftpsState: 'FtpsOnly'
       minTlsVersion: '1.2'
@@ -285,11 +311,13 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
   }
 }
 
+// Role definitions
 var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 var storageTableDataContributorRoleId = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
 var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
 
+// User access to Key Vault
 resource userKeyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(keyVault.id, userObjectId, keyVaultSecretsUserRoleId)
   scope: keyVault
@@ -300,6 +328,7 @@ resource userKeyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@202
   }
 }
 
+// Function App managed identity access to Key Vault
 resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableManagedIdentity) {
   name: guid(keyVault.id, functionApp.id, keyVaultSecretsUserRoleId)
   scope: keyVault
@@ -310,6 +339,7 @@ resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04
   }
 }
 
+// Function App managed identity access to Storage - Blob
 resource storageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableManagedIdentity) {
   name: guid(storageAccount.id, functionApp.id, storageBlobDataContributorRoleId)
   scope: storageAccount
@@ -323,6 +353,7 @@ resource storageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-
   }
 }
 
+// Function App managed identity access to Storage - Table
 resource storageTableRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableManagedIdentity) {
   name: guid(storageAccount.id, functionApp.id, storageTableDataContributorRoleId)
   scope: storageAccount
@@ -336,6 +367,7 @@ resource storageTableRoleAssignment 'Microsoft.Authorization/roleAssignments@202
   }
 }
 
+// Function App managed identity access to Storage - Queue
 resource storageQueueRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableManagedIdentity) {
   name: guid(storageAccount.id, functionApp.id, storageQueueDataContributorRoleId)
   scope: storageAccount

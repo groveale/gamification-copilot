@@ -13,7 +13,8 @@ param(
     [string]$SPO_SiteId = "<your-spo-site-id>",
     [string]$SPO_ListId = "<your-spo-list-id>",
     [string]$UserObjectId = "<your-user-object-id>", # Object ID of the service account to grant Key Vault access
-    [string]$InactivityDays = 14 # Optional, default is 14 days
+    [string]$InactivityDays = 14, # Optional, default is 14 days
+    [bool]$IsEmailListExclusive = $false # Whether the email list is exclusive (inclusion list = $true) or exclusion list ($false)
 )
 
 # Function to write colored output
@@ -134,6 +135,7 @@ try {
         spoListId=$SPO_ListId `
         inactivityDays=$InactivityDays `
         userObjectId=$UserObjectId `
+        isEmailListExclusive=$IsEmailListExclusive `
         --query 'properties.outputs' `
         --output json | ConvertFrom-Json
 
@@ -430,24 +432,24 @@ try {
             # Action when all if and elseif conditions are false
             Write-Status "Master key retrieved successfully."
             
-            # Store master key in Key Vault
-            try {
-                Write-Status "Storing master key in Key Vault..."
-                az keyvault secret set `
-                    --vault-name $keyVaultName `
-                    --name "FunctionAppMasterKey" `
-                    --value $masterKey `
-                    --output none
+            # # Store master key in Key Vault
+            # try {
+            #     Write-Status "Storing master key in Key Vault..."
+            #     az keyvault secret set `
+            #         --vault-name $keyVaultName `
+            #         --name "FunctionAppMasterKey" `
+            #         --value $masterKey `
+            #         --output none
                 
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Status "Master key stored in Key Vault successfully"
-                } else {
-                    Write-Warning "Failed to store master key in Key Vault"
-                }
-            }
-            catch {
-                Write-Warning "Failed to store master key in Key Vault: $($_.Exception.Message)"
-            }
+            #     if ($LASTEXITCODE -eq 0) {
+            #         Write-Status "Master key stored in Key Vault successfully"
+            #     } else {
+            #         Write-Warning "Failed to store master key in Key Vault"
+            #     }
+            # }
+            # catch {
+            #     Write-Warning "Failed to store master key in Key Vault: $($_.Exception.Message)"
+            # }
         }
     }
     catch {
@@ -475,7 +477,7 @@ try {
     Write-Status "Function App URL: https://$hostname"
     Write-Status "Master Key: $masterKey"
     Write-Status "Key Vault: $keyVaultName"
-    Write-Status "Master Key Secret: FunctionAppMasterKey (stored in Key Vault)"
+    ##Write-Status "Master Key Secret: FunctionAppMasterKey (stored in Key Vault)"
     Write-Host ""
     
     if ($functions.Count -gt 0) {

@@ -245,11 +245,29 @@ namespace groveale.Services
 
                                 try
                                 {
-                                    // Check if the user is in the exclusion list
-                                    if (exclusionEmails?.Contains(notificationResponse.UserId.ToString()) == true)
+                                    // // Check if the user is in the exclusion list
+                                    // if (exclusionEmails?.Contains(notificationResponse.UserId.ToString()) != true)
+                                    // {
+                                    //     _logger.LogInformation($"User {notificationResponse.UserId} is in the exclusion list. Skipping notification.");
+                                    //     continue;
+                                    // }
+
+                                    // Check if the user should be processed based on the email list and configuration
+                                    if (exclusionEmails != null || _settingsService.IsEmailListExclusive)
                                     {
-                                        _logger.LogInformation($"User {notificationResponse.UserId} is in the exclusion list. Skipping notification.");
-                                        continue;
+                                        var userId = notificationResponse.UserId.ToString();
+                                        var isUserInList = exclusionEmails?.Contains(userId) ?? false;
+                                        
+                                        // If IsEmailListExclusive is true, only process users in the list
+                                        // If IsEmailListExclusive is false, skip users in the list (exclusion)
+                                        bool shouldSkipUser = _settingsService.IsEmailListExclusive ? !isUserInList : isUserInList;
+                                        
+                                        if (shouldSkipUser)
+                                        {
+                                            var listType = _settingsService.IsEmailListExclusive ? "inclusion" : "exclusion";
+                                            _logger.LogInformation($"User {userId} filtered out by {listType} list. Skipping notification.");
+                                            continue;
+                                        }
                                     }
 
                                     // Process the filtered notification

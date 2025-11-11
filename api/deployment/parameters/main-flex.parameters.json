@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": { "value": "West Europe" },
+    "runtime": { "value": "dotnet-isolated" },
+    "storageAccountType": { "value": "Standard_LRS" },
+    "applicationName": { "value": "copilotgamifysc" },
+    "enableManagedIdentity": { "value": true },
+    "keyVaultSku": { "value": "standard" },
+    "encryptionKey": { "value": "SrSIjIWFF+DwFu5PpdXkH7laN9HlEBuUxn5TpUDEpL0=" },
+    "keyVaultEncryptionKeySecretName": { "value": "email-encryption-key" },
+    "tenantId": { "value": "d8464949-bb1d-476f-bbe8-a46293833f6d" },
+    "authGuid": { "value": "0623ba67-0cf2-426a-8f35-8c2670468eeb" },
+    "spoSiteId": { "value": "6e34d238-5c79-479d-9c09-5e5922c87490" },
+    "spoFieldName": { "value": "UPN" },
+    "spoListId": { "value": "Bdb74bbdc-72e9-4906-b3de-e6dc2b9ce16b" },
+    "tags": {
+      "value": {
+        "Application": "CopilotGamification",
+        "Environment": "Production",
+        "ManagedBy": "Bicep",
+        "Security": "HighSecurity"
+      }
+    },
+    "inactivityDays": { "value": "30" },
+    "userObjectId": { "value": "eb239c8c-4bfd-485e-992c-8dc1f42f5278" },
+    "apimSku": { "value": "Developer" },
+    "apimPublisherEmail": { "value": "admin@yourcompany.com" },
+    "apimPublisherName": { "value": "Your Company Name" },
+  // No VNet or subnet params needed for main-flex.bicep
+  // Add any additional params required by main-flex.bicep here
+  "storagePublicNetworkAccess": { "value": false },
+  "allowBlobPublicAccess": { "value": false },
+  "enableAppInsights": { "value": true },
+  "appInsightsLocation": { "value": "West Europe" },
+  "maximumInstanceCount": { "value": 100 },
+  "instanceMemoryMB": { "value": 2048 },
+  "allowedIpAddresses": { "value": [] },
+  "allowedServiceTags": { "value": ["AzureCloud"] },
+  "allowedVirtualNetworks": { "value": [] }
+  }
+}
