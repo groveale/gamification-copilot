@@ -235,7 +235,7 @@ try {
 
         ### 3. Grant SharePoint permission using Sites.Selected model ###
         $permissionBody = @{
-            roles               = @("read")  # or "write"
+            roles               = @("read") 
             grantedToIdentities = @(
                 @{
                     application = @{

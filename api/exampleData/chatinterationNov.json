@@ -1,0 +1,45 @@
+{
+    "CreationTime": "2025-11-13T17:48:53",
+    "Id": "3fc24b81-8f70-4ec4-b434-51713f4efd89",
+    "Operation": "CopilotInteraction",
+    "OrganizationId": "75e67881-b174-484b-9d30-c581c7ebc177",
+    "RecordType": 261,
+    "UserKey": "cf336493-15f3-4f56-b5e7-6aacfcfd88b0",
+    "UserType": 0,
+    "Version": 1,
+    "Workload": "Copilot",
+    "ClientIP": "",
+    "UserId": "reader@groverale.onmicrosoft.com",
+    "ClientRegion": "",
+    "CopilotEventData": {
+        "AISystemPlugin": [
+            {
+                "Id": "BingWebSearch",
+                "Name": "BuiltIn"
+            }
+        ],
+        "AccessedResources": [],
+        "AppHost": "Office",
+        "Contexts": [],
+        "MessageIds": [],
+        "Messages": [
+            {
+                "Id": "1763056133585",
+                "JailbreakDetected": false,
+                "isPrompt": true
+            },
+            {
+                "Id": "1763056133784",
+                "JailbreakDetected": false,
+                "isPrompt": false
+            }
+        ],
+        "ModelTransparencyDetails": [
+            {
+                "ModelName": "DEEP_LEO"
+            }
+        ],
+        "ThreadId": "19:C74S9nPVNFAmJmPHLEjrIWB3wDu9Ut0Vlv69sOtSPRw1@thread.v2"
+    },
+    "CopilotLogVersion": "1.0.0.0"
+}

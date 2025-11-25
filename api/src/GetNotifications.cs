@@ -69,7 +69,7 @@ namespace groveale
 
                 // Get copilot audit records
                 var copilotAuditRecords = await _m365ActivityService.GetCopilotActivityNotificationsAsync(notifications, encryptionService, exclusionEmails);
-                var RAWCopilotInteractions = await _m365ActivityService.GetCopilotActivityNotificationsRAWAsync(notifications);
+                //var RAWCopilotInteractions = await _m365ActivityService.GetCopilotActivityNotificationsRAWAsync(notifications);
 
                 // store the new lists in the table
                 foreach (var interaction in copilotAuditRecords)
@@ -78,10 +78,10 @@ namespace groveale
                 }
 
                 // store the raw copilot interactions in the table
-                foreach (var interaction in RAWCopilotInteractions)
-                {
-                    await _azureTableService.AddCopilotInteractionRAWAysnc(interaction);
-                }
+                // foreach (var interaction in RAWCopilotInteractions)
+                // {
+                //     await _azureTableService.AddCopilotInteractionRAWAysnc(interaction);
+                // }
 
 
                 // Group the copilot audit records by user and extract the CopilotEventData
