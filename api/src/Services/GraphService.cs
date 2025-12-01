@@ -17,7 +17,7 @@ namespace groveale.Services
         Task SetReportAnonSettingsAsync(bool displayConcealedNames);
         Task<AdminReportSettings> GetReportAnonSettingsAsync();
 
-        Task<Dictionary<string, bool>> GetM365CopilotUsersAsync(string reportRefreshDate);
+        Task<Dictionary<string, bool>> GetM365CopilotUsersAsync(string reportRefreshDate, Microsoft.Extensions.Logging.ILogger _logger);
         Task<Dictionary<string, bool>> GetM365CopilotUserFallBackAsync();
     }
 
@@ -72,7 +72,7 @@ namespace groveale.Services
             return users;
         }
 
-        public async Task<Dictionary<string, bool>> GetM365CopilotUsersAsync(string reportRefreshDate)
+        public async Task<Dictionary<string, bool>> GetM365CopilotUsersAsync(string reportRefreshDate, Microsoft.Extensions.Logging.ILogger _logger)
         {
             var activeUsers = new List<Office365ActiveUserDetail>();
 
@@ -93,31 +93,35 @@ namespace groveale.Services
                 {
                     activeUsersResponse = await _graphServiceClient.Reports.GetOffice365ActiveUserDetailWithDate(kiotaDate).WithUrl(activeUsersResponse.OdataNextLink).GetAsGetOffice365ActiveUserDetailWithDateGetResponseAsync();
                     activeUsers.AddRange(activeUsersResponse.Value);
+                    _logger.LogInformation($"Total User reports: {activeUsers.Count}");
                 }
 
-                var copilotUsers = new Dictionary<string, bool>();
+                // presize the dictionary to avoid resizing
+                var copilotUsers = new Dictionary<string, bool>(activeUsers.Count);
+                var reportRefreshDateValue = dateTimeOffset.DateTime.Date;
                 // find all the user that have a copilot license. let's use lynq to filter the users
-                activeUsers.Where(usr => usr.AssignedProducts.Contains("MICROSOFT 365 COPILOT")).ToList().ForEach(usr =>
+                foreach (var usr in activeUsers)
                 {
-                    // Check if user has activity in Teams, Outlook or SharePoint or OneDrive on the report refresh date
-                    if (usr.TeamsLastActivityDate.GetValueOrDefault().DateTime == usr.ReportRefreshDate.GetValueOrDefault().DateTime ||
-                        usr.ExchangeLastActivityDate.GetValueOrDefault().DateTime == usr.ReportRefreshDate.GetValueOrDefault().DateTime ||
-                        usr.SharePointLastActivityDate.GetValueOrDefault().DateTime == usr.ReportRefreshDate.GetValueOrDefault().DateTime ||
-                        usr.OneDriveLastActivityDate.GetValueOrDefault().DateTime == usr.ReportRefreshDate.GetValueOrDefault().DateTime)
-                    {
-                        // Add the user to the list
-                        copilotUsers.Add(usr.UserPrincipalName, true);
-                    }
+                    // Check if user has copilot license
+                    if (usr.AssignedProducts == null || !usr.AssignedProducts.Contains("MICROSOFT 365 COPILOT"))
+                        continue;
 
-                    // if no usage they are considered offline and not processed (should reduce weekend overhead processing)
-                });
+                    // Check if user has activity on the report refresh date - break early if found
+                    if (usr.TeamsLastActivityDate.GetValueOrDefault().DateTime.Date == reportRefreshDateValue ||
+                        usr.ExchangeLastActivityDate.GetValueOrDefault().DateTime.Date == reportRefreshDateValue ||
+                        usr.SharePointLastActivityDate.GetValueOrDefault().DateTime.Date == reportRefreshDateValue ||
+                        usr.OneDriveLastActivityDate.GetValueOrDefault().DateTime.Date == reportRefreshDateValue)
+                    {
+                        copilotUsers[usr.UserPrincipalName] = true;
+                    }
+                }
 
                 return copilotUsers;
 
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error getting copilot users: {ex.Message}");
+                _logger.LogError($"Error getting copilot users: {ex.Message}");
             }
 
             return null;
@@ -145,7 +149,7 @@ namespace groveale.Services
                 var copilotUsers = new Dictionary<string, bool>();
                 // find all the user that have a copilot license. let's use lynq to filter the users
                 activeUsers.Where(usr => usr.AssignedProducts.Contains("MICROSOFT 365 COPILOT")).ToList().ForEach(usr =>
-                {                   
+                {
                     copilotUsers.Add(usr.UserPrincipalName, true);
                 });
 

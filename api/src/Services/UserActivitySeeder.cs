@@ -80,7 +80,8 @@ namespace groveale.Services
 
             // Get the Monday of the current week
             var dayOfWeek = (int)DateTime.UtcNow.Date.DayOfWeek;
-            var daysToSubtract = dayOfWeek == 0 ? 6 : dayOfWeek - 1; // Adjust for Sunday
+            //var daysToSubtract = dayOfWeek == 0 ? 6 : dayOfWeek - 1; // Adjust for Sunday
+            var daysToSubtract = dayOfWeek; // Sunday is 0, so subtract directly
             var monday = DateTime.UtcNow.Date.AddDays(-1 * daysToSubtract);
 
             var activities = new List<CopilotTimeFrameUsage>();

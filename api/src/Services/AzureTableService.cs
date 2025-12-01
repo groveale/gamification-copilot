@@ -25,6 +25,8 @@ namespace groveale.Services
         Task RotateKeyRecentDailyTableValues(TableClient tableClient, DeterministicEncryptionService existingKeyService, DeterministicEncryptionService newKeyService);
         Task RotateKeyTimeFrameTableValues(TableClient tableClient, DeterministicEncryptionService existingKeyService, DeterministicEncryptionService newKeyService);
 
+
+
         TableClient GetCopilotAgentInteractionTableClient();
         TableClient GetCopilotInteractionDailyAggregationsTableClient();
         TableClient GetWeeklyCopilotInteractionTableClient();
@@ -36,6 +38,7 @@ namespace groveale.Services
 
         // from other fucntion
         Task<int> ProcessUserDailySnapshots(List<M365CopilotUsage> siteSnapshots, DeterministicEncryptionService encryptionService);
+        Task<int> ProcessAgentUsageAggregationsAsync(string dateToProcess);
         Task<List<string>> GetUsersWithStreakForApp(string app, int count);
         Task<string?> GetStartDate(string timeFrame);
         Task<List<string>> GetUsersWhoHaveCompletedActivityForApp(string app, string? dayCount, string? interactionCount, string timeFrame, string? startDate);
@@ -46,6 +49,8 @@ namespace groveale.Services
         Task SeedWeeklyTimeFrameActivitiesAsync(List<CopilotTimeFrameUsage> userActivitiesSeed, string startDate);
         Task SeedAllTimeActivityAsync(List<CopilotTimeFrameUsage> userActivitiesSeed);
         Task SeedInactiveUsersAsync(List<InactiveUser> inactiveUsersSeed);
+
+
     }
 
     public class AzureTableService : IAzureTableService
@@ -1288,7 +1293,7 @@ namespace groveale.Services
             public required string DecryptedUPN { get; set; }
         }
 
-        
+
 
         public async Task<bool> GetWebhookStateAsync()
         {
@@ -1523,6 +1528,118 @@ namespace groveale.Services
 
             return DAUadded;
 
+        }
+
+        public async Task<int> ProcessAgentUsageAggregationsAsync(string dateToProcess)
+        {
+            int recordsAdded = 0;
+
+            // Query the daily agent interaction table for the specified date
+            // FIX: Use the starts-with pattern for partition key
+            string filter = $"PartitionKey ge '{dateToProcess}-' and PartitionKey lt '{dateToProcess}-\uFFFF'";
+
+            _logger.LogInformation($"Querying daily agent interactions with filter: {filter}");
+
+            var queryResults = copilotAgentInteractionTableClient.QueryAsync<AgentInteraction>(filter);
+
+            // Group the results by agentId (RowKey) and sum the interaction counts
+            var agentAggregations = new Dictionary<string, (int TotalInteractions, string AgentName)>();
+
+            await foreach (var queryResult in queryResults)
+            {
+                if (agentAggregations.ContainsKey(queryResult.RowKey))
+                {
+                    var existing = agentAggregations[queryResult.RowKey];
+                    agentAggregations[queryResult.RowKey] = (
+                        existing.TotalInteractions + queryResult.TotalInteractionCount,
+                        existing.AgentName
+                    );
+                }
+                else
+                {
+                    agentAggregations[queryResult.RowKey] = (
+                        queryResult.TotalInteractionCount,
+                        queryResult.AgentName
+                    );
+                }
+                recordsAdded++;
+            }
+
+            _logger.LogInformation($"Processed {recordsAdded} agent interaction records for date: {dateToProcess}");
+            _logger.LogInformation($"Found {agentAggregations.Count} unique agents with aggregated interactions");
+
+            // Update the weekly, monthly, and all-time agent aggregation tables
+            foreach (var timeFrame in new[] { "weekly", "monthly", "alltime" })
+            {
+                foreach (var agent in agentAggregations)
+                {
+                    var agentId = agent.Key;
+                    var totalInteractions = agent.Value.TotalInteractions;
+                    var agentName = agent.Value.AgentName;
+
+                    TableClient targetTableClient = timeFrame switch
+                    {
+                        "weekly" => _agentWeeklyTableClient,
+                        "monthly" => _agentMonthlyTableClient,
+                        "alltime" => _agentAllTimeTableClient,
+                        _ => throw new ArgumentException("Invalid time frame")
+                    };
+
+                    var partitionKey = timeFrame switch
+                    {
+                        "weekly" => GetPartitionKeyFromStringDate(dateToProcess, timeFrame),
+                        "monthly" => GetPartitionKeyFromStringDate(dateToProcess, timeFrame),
+                        "alltime" => AgentInteraction.AllTimePartitionKeyPrefix,
+                        _ => throw new ArgumentException("Invalid time frame")
+                    };
+
+                    try
+                    {
+                        // Try to get existing entity
+                        var retrieveOp = await targetTableClient.GetEntityIfExistsAsync<AgentInteraction>(partitionKey, agentId);
+
+                        if (retrieveOp.HasValue)
+                        {
+                            // Entity exists - append by adding to the count
+                            var existingEntity = retrieveOp.Value;
+                            existingEntity.TotalInteractionCount += totalInteractions;
+
+                            await targetTableClient.UpdateEntityAsync(existingEntity, existingEntity.ETag, TableUpdateMode.Merge);
+                            _logger.LogInformation($"Updated {timeFrame} agent {agentId}: total now {existingEntity.TotalInteractionCount}");
+                        }
+                        else
+                        {
+                            // Entity doesn't exist - create new
+                            var newEntity = new AgentInteraction
+                            {
+                                PartitionKey = partitionKey,
+                                RowKey = agentId,
+                                AgentName = agentName,
+                                TotalInteractionCount = totalInteractions
+                            };
+
+                            await targetTableClient.AddEntityAsync(newEntity);
+                            _logger.LogInformation($"Created {timeFrame} agent {agentId}: {totalInteractions}");
+                        }
+
+                        
+                    }
+                    catch (RequestFailedException ex) when (ex.Status == 409)
+                    {
+                        // Race condition: entity was created between our check and update
+                        // Retry with get + update
+                        var entity = await targetTableClient.GetEntityAsync<AgentInteraction>(partitionKey, agentId);
+                        entity.Value.TotalInteractionCount += totalInteractions;
+                        await targetTableClient.UpdateEntityAsync(entity.Value, entity.Value.ETag, TableUpdateMode.Merge);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, $"Error updating {timeFrame} agent {agentId}");
+                    }
+                }
+            }
+
+            return agentAggregations.Count;
         }
 
         private async Task<List<CopilotTimeFrameUsage>> GetDailyAuditDataForUser(string uPN, string reportDate)
@@ -1814,7 +1931,10 @@ namespace groveale.Services
         {
             // Get the Monday of the current week
             var dayOfWeek = (int)date.DayOfWeek;
-            var daysToSubtract = dayOfWeek == 0 ? 6 : dayOfWeek - 1; // Adjust for Sunday
+            // Monday
+            //var daysToSubtract = dayOfWeek == 0 ? 6 : dayOfWeek - 1; // Adjust for Sunday
+            // Sunday
+            var daysToSubtract = dayOfWeek; // Adjust for Sunday
             return date.AddDays(-daysToSubtract).ToString("yyyy-MM-dd");
         }
 
@@ -2134,13 +2254,26 @@ namespace groveale.Services
             return users;
         }
 
+        private string GetPartitionKeyFromStringDate(string dateString, string timeFrame)
+        {
+            DateTime date = DateTime.ParseExact(dateString, "yyyy-MM-dd", null);
+
+            return timeFrame.ToLowerInvariant() switch
+            {
+                "daily" => date.ToString("yyyy-MM-dd"),
+                "weekly" => GetWeekStartDate(date),
+                "monthly" => GetMonthStartDate(date),
+                _ => throw new ArgumentException("Invalid timeFrame")
+            };
+        }
+
         private async Task<string> GetActiveTimeFrame(string timeFrame)
         {
             try
             {
                 // Use direct entity lookup instead of query for better performance
                 var response = await _reportRefreshDateTableClient.GetEntityIfExistsAsync<TableEntity>("ReportRefreshDate", timeFrame);
-                
+
                 if (response.HasValue)
                 {
                     var startDate = response.Value.GetString("StartDate");
@@ -2148,7 +2281,7 @@ namespace groveale.Services
                     {
                         return startDate;
                     }
-                    
+
                     _logger.LogWarning($"StartDate is null or empty for timeFrame {timeFrame}");
                 }
                 else

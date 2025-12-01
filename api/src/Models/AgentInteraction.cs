@@ -50,9 +50,9 @@ public class AgentInteraction : BaseTableEntity
         }
 
         // No user info
-        public TableEntity ToAllTimeAgentTableEntity()
+        public TableEntity ToAgentOnlyTableEntity(string stringDate)
         {
-            PartitionKey = AllTimePartitionKeyPrefix;
+            PartitionKey = stringDate;
             RowKey = AgentId;
 
             return new TableEntity(PartitionKey, RowKey)
