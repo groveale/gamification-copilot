@@ -1398,90 +1398,106 @@ namespace groveale.Services
 
             foreach (var userSnap in userSnapshots)
             {
-                reportRefreshDateString = userSnap.ReportRefreshDate;
-                // if last activity date is not the same as the report refresh date, we need to validate how long usage has not occured
-                // there is no daily activity if the last activity date is not the same as the report refresh date
 
-                if (userSnap.LastActivityDate != userSnap.ReportRefreshDate)
+                try
                 {
-                    var reportRefreshDate = DateTime.ParseExact(userSnap.ReportRefreshDate, "yyyy-MM-dd", null);
+                    // Log the user snapshot being processed
+                    _logger.LogInformation($"Processing user snapshot for UPN: {userSnap.UserPrincipalName}, ReportRefreshDate: {userSnap.ReportRefreshDate}, LastActivityDate: {userSnap.LastActivityDate}");
 
-                    if (string.IsNullOrEmpty(userSnap.LastActivityDate))
+
+                    reportRefreshDateString = userSnap.ReportRefreshDate;
+                    // if last activity date is not the same as the report refresh date, we need to validate how long usage has not occured
+                    // there is no daily activity if the last activity date is not the same as the report refresh date
+
+                    if (userSnap.LastActivityDate != userSnap.ReportRefreshDate)
                     {
-                        // we need to record in another table
-                        // Can we set the last activity as epoch when null?
-                        var epochTime = new DateTime(1970, 1, 1);
-                        lastActivityDates.Add((epochTime.ToString("yyyy-MM-dd"), userSnap.UserPrincipalName, userSnap.ReportRefreshDate, userSnap.DisplayName));
-                    }
-                    else
-                    {
-                        // Convert to date time
-                        var lastActivityDate = DateTime.ParseExact(userSnap.LastActivityDate, "yyyy-MM-dd", null);
+                        var reportRefreshDate = DateTime.ParseExact(userSnap.ReportRefreshDate, "yyyy-MM-dd", null);
 
-
-                        // Check if last activity is before days ti check
-                        if (lastActivityDate.AddDays(_daysToCheck) < reportRefreshDate)
+                        if (string.IsNullOrEmpty(userSnap.LastActivityDate))
                         {
                             // we need to record in another table
-                            lastActivityDates.Add((userSnap.LastActivityDate, userSnap.UserPrincipalName, userSnap.ReportRefreshDate, userSnap.DisplayName));
+                            // Can we set the last activity as epoch when null?
+                            var epochTime = new DateTime(1970, 1, 1);
+                            lastActivityDates.Add((epochTime.ToString("yyyy-MM-dd"), userSnap.UserPrincipalName, userSnap.ReportRefreshDate, userSnap.DisplayName));
                         }
+                        else
+                        {
+                            // Convert to date time
+                            var lastActivityDate = DateTime.ParseExact(userSnap.LastActivityDate, "yyyy-MM-dd", null);
+
+
+                            // Check if last activity is before days ti check
+                            if (lastActivityDate.AddDays(_daysToCheck) < reportRefreshDate)
+                            {
+                                // we need to record in another table
+                                lastActivityDates.Add((userSnap.LastActivityDate, userSnap.UserPrincipalName, userSnap.ReportRefreshDate, userSnap.DisplayName));
+                            }
+                        }
+
                     }
 
+                    // Encrypt the UPN - lookup is already encrypted
+                    userSnap.UserPrincipalName = encryptionService.Encrypt(userSnap.UserPrincipalName);
+
+                    // if getting audit data we should get the aggregation data for the user
+                    // Get the aggregation entity
+                    var aggregationEntity = await GetDailyAuditDataForUser(userSnap.UserPrincipalName, userSnap.ReportRefreshDate);
+
+                    var userEntity = ConvertToUserActivity(userSnap, aggregationEntity);
+
+                    // Get User Activity
+                    // Todo, store the more precise data in the table
+                    var userActivityDictionary = ConvertToUsageDictionary(userEntity);
+
+                    // Log the user activityDictionary
+                    _logger.LogInformation($"User Activity Dictionary for {userEntity.UPN}: {string.Join(", ", userActivityDictionary.Select(kvp => $"{kvp.Key}: {kvp.Value}"))}");
+
+
+                    // Todo, do we really need to store this data in the table?
+                    // For now we won't
+
+                    // try
+                    // {
+                    //     // Try to add the entity if it doesn't exist
+                    //     await _userDAUTableClient.AddEntityAsync(userEntity.ToTableEntity());
+                    //     DAUadded++;
+
+                    // }
+                    // catch (Azure.RequestFailedException ex) when (ex.Status == 409) // Conflict indicates the entity already exists
+                    // {
+                    //     // Merge the entity if it already exists
+                    //     await _userDAUTableClient.UpdateEntityAsync(userEntity.ToTableEntity(), ETag.All, TableUpdateMode.Merge);
+                    // }
+
+                    // Agent Data
+                    var dailyAgentData = await GetDailyAgentDataForUser(userEntity.UPN, userEntity.ReportDate.ToString("yyyy-MM-dd"));
+
+
+                    // We need to update the  weekly, monthly and alltime tables
+                    await UpdateUserSnapshots(userActivityDictionary, userEntity.UPN, "alltime", userEntity.ReportDate.ToString("yyyy-MM-dd"));
+                    await UpdateAgentSnapshots(dailyAgentData, "alltime", userEntity.UPN, userEntity.ReportDate.ToString("yyyy-MM-dd"));
+
+                    // Update Monthly
+                    var firstOfMonthForSnapshot = GetMonthStartDate(userEntity.ReportDate);
+
+                    await UpdateUserSnapshots(userActivityDictionary, userEntity.UPN, "monthly", firstOfMonthForSnapshot);
+                    await UpdateAgentSnapshots(dailyAgentData, "monthly", userEntity.UPN, firstOfMonthForSnapshot);
+
+                    // Update Weekly - Get our timeFrame
+                    var firstMondayOfWeeklySnapshot = GetWeekStartDate(userEntity.ReportDate);
+
+                    await UpdateUserSnapshots(userActivityDictionary, userEntity.UPN, "weekly", firstMondayOfWeeklySnapshot);
+                    await UpdateAgentSnapshots(dailyAgentData, "weekly", userEntity.UPN, firstMondayOfWeeklySnapshot);
+
                 }
+                catch (Exception logEx)
+                {
+                    _logger.LogError(logEx, "Error logging user snapshot for UPN: {UPN}", userSnap.UserPrincipalName);
+                    // log the trace
+                    _logger.LogError("Message: {Message}", logEx.Message);
+                    _logger.LogError(logEx, "Error processing usage data. {StackTrace}", logEx.StackTrace);
 
-                // Encrypt the UPN - lookup is already encrypted
-                userSnap.UserPrincipalName = encryptionService.Encrypt(userSnap.UserPrincipalName);
-
-                // if getting audit data we should get the aggregation data for the user
-                // Get the aggregation entity
-                var aggregationEntity = await GetDailyAuditDataForUser(userSnap.UserPrincipalName, userSnap.ReportRefreshDate);
-
-                var userEntity = ConvertToUserActivity(userSnap, aggregationEntity);
-
-                // Get User Activity
-                // Todo, store the more precise data in the table
-                var userActivityDictionary = ConvertToUsageDictionary(userEntity);
-
-                // Log the user activityDictionary
-                _logger.LogInformation($"User Activity Dictionary for {userEntity.UPN}: {string.Join(", ", userActivityDictionary.Select(kvp => $"{kvp.Key}: {kvp.Value}"))}");
-
-
-                // Todo, do we really need to store this data in the table?
-                // For now we won't
-
-                // try
-                // {
-                //     // Try to add the entity if it doesn't exist
-                //     await _userDAUTableClient.AddEntityAsync(userEntity.ToTableEntity());
-                //     DAUadded++;
-
-                // }
-                // catch (Azure.RequestFailedException ex) when (ex.Status == 409) // Conflict indicates the entity already exists
-                // {
-                //     // Merge the entity if it already exists
-                //     await _userDAUTableClient.UpdateEntityAsync(userEntity.ToTableEntity(), ETag.All, TableUpdateMode.Merge);
-                // }
-
-                // Agent Data
-                var dailyAgentData = await GetDailyAgentDataForUser(userEntity.UPN, userEntity.ReportDate.ToString("yyyy-MM-dd"));
-
-
-                // We need to update the  weekly, monthly and alltime tables
-                await UpdateUserSnapshots(userActivityDictionary, userEntity.UPN, "alltime", userEntity.ReportDate.ToString("yyyy-MM-dd"));
-                await UpdateAgentSnapshots(dailyAgentData, "alltime", userEntity.UPN, userEntity.ReportDate.ToString("yyyy-MM-dd"));
-
-                // Update Monthly
-                var firstOfMonthForSnapshot = GetMonthStartDate(userEntity.ReportDate);
-
-                await UpdateUserSnapshots(userActivityDictionary, userEntity.UPN, "monthly", firstOfMonthForSnapshot);
-                await UpdateAgentSnapshots(dailyAgentData, "monthly", userEntity.UPN, firstOfMonthForSnapshot);
-
-                // Update Weekly - Get our timeFrame
-                var firstMondayOfWeeklySnapshot = GetWeekStartDate(userEntity.ReportDate);
-
-                await UpdateUserSnapshots(userActivityDictionary, userEntity.UPN, "weekly", firstMondayOfWeeklySnapshot);
-                await UpdateAgentSnapshots(dailyAgentData, "weekly", userEntity.UPN, firstMondayOfWeeklySnapshot);
-
+                }
             }
 
             // Update the timeFrame table
@@ -1622,7 +1638,7 @@ namespace groveale.Services
                             _logger.LogInformation($"Created {timeFrame} agent {agentId}: {totalInteractions}");
                         }
 
-                        
+
                     }
                     catch (RequestFailedException ex) when (ex.Status == 409)
                     {
@@ -1767,7 +1783,11 @@ namespace groveale.Services
 
             // Turn the aggregation list into a dictionary with app as the key
             // and the value as interaction count
-            var aggregationUsageDict = aggregationUsageList.ToDictionary(x => x.App, x => x.TotalInteractionCount);
+            var aggregationUsageDict = aggregationUsageList
+                .GroupBy(x => x.App)
+                .ToDictionary(g => g.Key, g => g.Sum(x => x.TotalInteractionCount));
+
+            _logger.LogInformation($"Aggregated {aggregationUsageList.Count} entries into {aggregationUsageDict.Count} unique apps for UPN: {user.UserPrincipalName}");
 
             int DailyInteractionCountForApp(AppType appType)
             {
