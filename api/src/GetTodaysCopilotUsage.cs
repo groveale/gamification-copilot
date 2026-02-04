@@ -62,11 +62,11 @@ namespace groverale
                 return;
             }
 
-            var firstUser = usageData.FirstOrDefault();
+            var firstUser = usageData.Values.FirstOrDefault();
             var reportRefreshDate = firstUser.ReportRefreshDate;
             _logger.LogInformation($"Report refresh date: {reportRefreshDate}");
 
-            var copilotUsers = await _graphService.GetM365CopilotUsersAsync(reportRefreshDate, _logger);
+            var copilotUsers = await _graphService.GetM365CopilotUsersAsync(reportRefreshDate, usageData, _logger);
             _logger.LogInformation($"copilot users: {copilotUsers.Count}");
 
             // If the copilot users are empty, we can fallback to the old method
@@ -88,19 +88,19 @@ namespace groverale
             var exclusionEmails = await _exclusionEmailService.LoadEmailsFromPersonFieldAsync();
             _logger.LogInformation($"Exclusion emails loaded: {exclusionEmails.Count}");
 
-            // TODO test: adding a user to the Copilot users
+            
             if (firstUser.UserPrincipalName.Contains("groverale"))
             {
                 _logger.LogInformation("Adding test user to copilot users.");
                 copilotUsers.TryAdd("alexg@groverale.onmicrosoft.com", true);
                 // We also need to add to the usage data if not already present
-                if (!usageData.Any(u => u.UserPrincipalName == "alexg@groverale.onmicrosoft.com"))
+                if (!usageData.ContainsKey("alexg@groverale.onmicrosoft.com"))
                 {
-                    usageData.Add(new M365CopilotUsage
+                    usageData["alexg@groverale.onmicrosoft.com"] = new M365CopilotUsage
                     {
                         UserPrincipalName = "alexg@groverale.onmicrosoft.com",
                         ReportRefreshDate = reportRefreshDate
-                    });
+                    };
                 }
                         
             }
@@ -144,11 +144,11 @@ namespace groverale
 
         }
 
-        private List<M365CopilotUsage> RemoveNonCopilotUsersAndOfflineUsers(List<M365CopilotUsage> usageData, Dictionary<string, bool> copilotUsers, HashSet<string> exclusionEmails)
+        private List<M365CopilotUsage> RemoveNonCopilotUsersAndOfflineUsers(Dictionary<string, M365CopilotUsage> usageData, Dictionary<string, bool> copilotUsers, HashSet<string> exclusionEmails)
         {
             var filteredUsageData = new List<M365CopilotUsage>();
 
-            foreach (var u in usageData)
+            foreach (var u in usageData.Values)
             {
                 if (copilotUsers.ContainsKey(u.UserPrincipalName))
                 {

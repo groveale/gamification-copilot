@@ -517,6 +517,14 @@ namespace groveale.Services
                     // Handle Forms interactions
                     copilotUsage.App = AppType.Forms;
                     break;
+                case "OutlookSidepane" :
+                    // Handle Outlook Sidepane interactions
+                    copilotUsage.App = AppType.Outlook;
+                    break;
+                case "Microsoft Teams" :
+                    // Handle Microsoft Teams interactions
+                    copilotUsage.App = AppType.Teams;
+                    break;
                 default:
                     // Handle other cases or log an error
                     // We have a new appHost to handle

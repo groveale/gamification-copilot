@@ -13,11 +13,11 @@ namespace groveale.Services
     public interface IGraphService
     {
         Task GetTodaysCopilotUsageDataAsync();
-        Task<List<M365CopilotUsage>> GetM365CopilotUsageReportAsyncJSON(Microsoft.Extensions.Logging.ILogger _logger);
+        Task<Dictionary<string, M365CopilotUsage>> GetM365CopilotUsageReportAsyncJSON(Microsoft.Extensions.Logging.ILogger _logger);
         Task SetReportAnonSettingsAsync(bool displayConcealedNames);
         Task<AdminReportSettings> GetReportAnonSettingsAsync();
 
-        Task<Dictionary<string, bool>> GetM365CopilotUsersAsync(string reportRefreshDate, Microsoft.Extensions.Logging.ILogger _logger);
+        Task<Dictionary<string, bool>> GetM365CopilotUsersAsync(string reportRefreshDate, Dictionary<string, M365CopilotUsage> usageData, Microsoft.Extensions.Logging.ILogger _logger);
         Task<Dictionary<string, bool>> GetM365CopilotUserFallBackAsync();
     }
 
@@ -72,7 +72,7 @@ namespace groveale.Services
             return users;
         }
 
-        public async Task<Dictionary<string, bool>> GetM365CopilotUsersAsync(string reportRefreshDate, Microsoft.Extensions.Logging.ILogger _logger)
+        public async Task<Dictionary<string, bool>> GetM365CopilotUsersAsync(string reportRefreshDate, Dictionary<string, M365CopilotUsage> copilotUsageData, Microsoft.Extensions.Logging.ILogger _logger)
         {
             var activeUsers = new List<Office365ActiveUserDetail>();
 
@@ -102,12 +102,14 @@ namespace groveale.Services
                 // find all the user that have a copilot license. let's use lynq to filter the users
                 foreach (var usr in activeUsers)
                 {
-                    // Check if user has copilot license
+                    // Check if user has copilot license (skip if not)
                     if (usr.AssignedProducts == null || !usr.AssignedProducts.Contains("MICROSOFT 365 COPILOT"))
                         continue;
 
                     // Check if user has activity on the report refresh date - break early if found
-                    if (usr.TeamsLastActivityDate.GetValueOrDefault().DateTime.Date == reportRefreshDateValue ||
+                    if (
+                        copilotUsageData.ContainsKey(usr.UserPrincipalName) && copilotUsageData[usr.UserPrincipalName].LastActivityDate == reportRefreshDate ||
+                        usr.TeamsLastActivityDate.GetValueOrDefault().DateTime.Date == reportRefreshDateValue ||
                         usr.ExchangeLastActivityDate.GetValueOrDefault().DateTime.Date == reportRefreshDateValue ||
                         usr.SharePointLastActivityDate.GetValueOrDefault().DateTime.Date == reportRefreshDateValue ||
                         usr.OneDriveLastActivityDate.GetValueOrDefault().DateTime.Date == reportRefreshDateValue)
@@ -166,7 +168,7 @@ namespace groveale.Services
 
 
 
-        public async Task<List<M365CopilotUsage>> GetM365CopilotUsageReportAsyncJSON(Microsoft.Extensions.Logging.ILogger _logger)
+        public async Task<Dictionary<string, M365CopilotUsage>> GetM365CopilotUsageReportAsyncJSON(Microsoft.Extensions.Logging.ILogger _logger)
         {
 
             var urlString = _graphServiceClient.Reports.GetMicrosoft365CopilotUsageUserDetailWithPeriod("D7").ToGetRequestInformation().URI.OriginalString;
@@ -177,7 +179,7 @@ namespace groveale.Services
 
             byte[] buffer = new byte[8192];
             int bytesRead;
-            List<M365CopilotUsage> m365CopilotUsageReports = new List<M365CopilotUsage>();
+            var m365CopilotUsageReports = new Dictionary<string, M365CopilotUsage>(StringComparer.OrdinalIgnoreCase);
 
             do
             {
@@ -197,7 +199,13 @@ namespace groveale.Services
                     if (doc.RootElement.TryGetProperty("value", out JsonElement usageReports))
                     {
                         var reports = JsonSerializer.Deserialize<List<M365CopilotUsage>>(usageReports.GetRawText());
-                        m365CopilotUsageReports.AddRange(reports);
+                        foreach (var report in reports)
+                        {
+                            if (!string.IsNullOrWhiteSpace(report.UserPrincipalName))
+                            {
+                                m365CopilotUsageReports[report.UserPrincipalName] = report; // Overwrite if duplicate
+                            }
+                        }
                         _logger.LogInformation($"Total User reports: {m365CopilotUsageReports.Count}");
 
                     }
