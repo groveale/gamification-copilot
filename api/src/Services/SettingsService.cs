@@ -13,6 +13,7 @@ namespace groveale.Services
         string SPOListId { get; }
         string ReminderDays { get; }
         bool IsEmailListExclusive { get; }
+        string UserAggregationsQueueName { get; }
         
     }
 
@@ -33,6 +34,8 @@ namespace groveale.Services
         // If true, the email list is exclusive (inclusion list). If false, it's an exclusion list.
         // Default to false (exclusion list) to maintain backward compatibility
         public bool IsEmailListExclusive => bool.TryParse(Environment.GetEnvironmentVariable("IsEmailListExclusive"), out var result) ? result : false;
+
+        public string UserAggregationsQueueName => Environment.GetEnvironmentVariable("UserAggregationsQueueName") ?? "user-aggregations";
 
     }
 }

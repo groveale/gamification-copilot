@@ -14,9 +14,10 @@ namespace groverale
         private readonly IAzureTableService _azureTableService;
         private readonly IKeyVaultService _keyVaultService;
         private readonly IExclusionEmailService _exclusionEmailService;
+        private readonly IQueueService _queueService;
 
 
-        public GetTodaysCopilotUsage(ILoggerFactory loggerFactory, IGraphService graphService, ISettingsService settingsService, IAzureTableService azureTableService, IKeyVaultService keyVaultService, IExclusionEmailService exclusionEmailService)
+        public GetTodaysCopilotUsage(ILoggerFactory loggerFactory, IGraphService graphService, ISettingsService settingsService, IAzureTableService azureTableService, IKeyVaultService keyVaultService, IExclusionEmailService exclusionEmailService, IQueueService queueService)
         {
             _graphService = graphService;
             _settingsService = settingsService;
@@ -24,6 +25,7 @@ namespace groverale
             _keyVaultService = keyVaultService;
             _logger = loggerFactory.CreateLogger<GetTodaysCopilotUsage>();
             _exclusionEmailService = exclusionEmailService;
+            _queueService = queueService;
         }
 
         [Function("GetTodaysCopilotUsage")]
@@ -53,6 +55,26 @@ namespace groverale
             // Get the usage data
             var usageData = await _graphService.GetM365CopilotUsageReportAsyncJSON(_logger);
             _logger.LogInformation($"Usage data: {usageData.Count}");
+
+            // Inject test data if no usage data and in test mode
+            if (usageData.Count == 0 && Environment.GetEnvironmentVariable("ENABLE_TEST_DATA") == "true")
+            {
+                _logger.LogInformation("No usage data found, but test mode enabled. Injecting test data...");
+                var testRefreshDate = DateTime.Now.AddDays(-1).ToString("yyyy-MM-dd");
+                usageData["alexg@groverale.onmicrosoft.com"] = new M365CopilotUsage
+                {
+                    UserPrincipalName = "alexg@groverale.onmicrosoft.com",
+                    ReportRefreshDate = testRefreshDate,
+                    LastActivityDate = testRefreshDate
+                };
+                usageData["testuser@groverale.onmicrosoft.com"] = new M365CopilotUsage
+                {
+                    UserPrincipalName = "testuser@groverale.onmicrosoft.com",
+                    ReportRefreshDate = testRefreshDate,
+                    LastActivityDate = testRefreshDate
+                };
+                _logger.LogInformation($"Injected {usageData.Count} test users");
+            }
 
             // extract the refresh date from the first or default user
             if (usageData.Count == 0)
@@ -127,8 +149,12 @@ namespace groverale
                 // Create Encyption Service
                 var encryptionService = await DeterministicEncryptionService.CreateAsync(_settingsService, _keyVaultService);
 
-                var recordsAdded = await _azureTableService.ProcessUserDailySnapshots(copilotUsageData, encryptionService);
-                _logger.LogInformation($"Records added: {recordsAdded}");
+                // Process user snapshots (handles inactive user tracking and returns encrypted UPNs)
+                var encryptedUPNs = await _azureTableService.ProcessUserDailySnapshots(copilotUsageData, encryptionService);
+                _logger.LogInformation($"Processed {encryptedUPNs.Count} user snapshots for queuing");
+
+                // Queue user aggregation messages for parallel processing
+                await _queueService.QueueUserAggregationsAsync(encryptedUPNs, reportRefreshDate);
 
                 // aggregate agent usage data - 1 row per agent (weekly, monthly, all time
                 // We will do this from the previous day's agent aggregatations

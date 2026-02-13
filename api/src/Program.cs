@@ -23,6 +23,9 @@ var host = new HostBuilder()
         // Register the AzureTableService
         services.AddSingleton<IAzureTableService, AzureTableService>();
 
+        // Register the QueueService
+        services.AddSingleton<IQueueService, QueueService>();
+
         // Register the KeyVaultService
         services.AddSingleton<IKeyVaultService, KeyVaultService>();
 

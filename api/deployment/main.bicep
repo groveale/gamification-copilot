@@ -45,6 +45,9 @@ param spoFieldName string = 'UPN'
 @description('SharePoint Online List ID')
 param spoListId string
 
+@description('Queue name for user aggregations')
+param queueName string = 'user-aggregations'
+
 @description('Tags to apply to all resources')
 param tags object = {
   Application: applicationName
@@ -268,6 +271,10 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
         {
           name: 'IsEmailListExclusive'
           value: string(isEmailListExclusive)
+        }
+        {
+          name: 'UserAggregationsQueueName'
+          value: queueName
         }
       ]
       ftpsState: 'FtpsOnly'

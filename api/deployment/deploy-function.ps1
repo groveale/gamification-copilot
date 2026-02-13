@@ -14,7 +14,8 @@ param(
     [string]$SPO_ListId = "<your-spo-list-id>",
     [string]$UserObjectId = "<your-user-object-id>", # Object ID of the service account to grant Key Vault access
     [string]$InactivityDays = 14, # Optional, default is 14 days
-    [bool]$IsEmailListExclusive = $false # Whether the email list is exclusive (inclusion list = $true) or exclusion list ($false)
+    [bool]$IsEmailListExclusive = $false, # Whether the email list is exclusive (inclusion list = $true) or exclusion list ($false)
+    [string]$QueueName = "user-aggregations" # Queue name for user aggregations
 )
 
 # Function to write colored output
@@ -136,6 +137,7 @@ try {
         inactivityDays=$InactivityDays `
         userObjectId=$UserObjectId `
         isEmailListExclusive=$IsEmailListExclusive `
+        queueName=$QueueName `
         --query 'properties.outputs' `
         --output json | ConvertFrom-Json
 

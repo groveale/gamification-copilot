@@ -1,1 +1,3 @@
 api/deployment/parameters/groveale-tenant.ps1
+api/src/__azurite_db_queue__.json
+api/src/__azurite_db_queue_extent__.json

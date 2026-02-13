@@ -37,7 +37,8 @@ namespace groveale.Services
         TableClient GetAllTimeAgentInteractionTableClient();
 
         // from other fucntion
-        Task<int> ProcessUserDailySnapshots(List<M365CopilotUsage> siteSnapshots, DeterministicEncryptionService encryptionService);
+        Task<List<string>> ProcessUserDailySnapshots(List<M365CopilotUsage> siteSnapshots, DeterministicEncryptionService encryptionService);
+        Task ProcessSingleUserAggregationAsync(string encryptedUPN, string reportDate);
         Task<int> ProcessAgentUsageAggregationsAsync(string dateToProcess);
         Task<List<string>> GetUsersWithStreakForApp(string app, int count);
         Task<string?> GetStartDate(string timeFrame);
@@ -1393,9 +1394,9 @@ namespace groveale.Services
 
         #region From ScraperFunction
 
-        public async Task<int> ProcessUserDailySnapshots(List<M365CopilotUsage> userSnapshots, DeterministicEncryptionService encryptionService)
+        public async Task<List<string>> ProcessUserDailySnapshots(List<M365CopilotUsage> userSnapshots, DeterministicEncryptionService encryptionService)
         {
-            int DAUadded = 0;
+            var encryptedUPNs = new List<string>();
 
             // Tuple to store the user's last activity date and username
             var lastActivityDates = new List<(string, string, string, string)>();
@@ -1444,58 +1445,9 @@ namespace groveale.Services
 
                     }
 
-                    // Encrypt the UPN - lookup is already encrypted
-                    userSnap.UserPrincipalName = encryptionService.Encrypt(userSnap.UserPrincipalName);
-
-                    // if getting audit data we should get the aggregation data for the user
-                    // Get the aggregation entity
-                    var aggregationEntity = await GetDailyAuditDataForUser(userSnap.UserPrincipalName, userSnap.ReportRefreshDate);
-
-                    var userEntity = ConvertToUserActivity(userSnap, aggregationEntity);
-
-                    // Get User Activity
-                    // Todo, store the more precise data in the table
-                    var userActivityDictionary = ConvertToUsageDictionary(userEntity);
-
-                    // Log the user activityDictionary
-                    _logger.LogInformation($"User Activity Dictionary for {userEntity.UPN}: {string.Join(", ", userActivityDictionary.Select(kvp => $"{kvp.Key}: {kvp.Value}"))}");
-
-
-                    // Todo, do we really need to store this data in the table?
-                    // For now we won't
-
-                    // try
-                    // {
-                    //     // Try to add the entity if it doesn't exist
-                    //     await _userDAUTableClient.AddEntityAsync(userEntity.ToTableEntity());
-                    //     DAUadded++;
-
-                    // }
-                    // catch (Azure.RequestFailedException ex) when (ex.Status == 409) // Conflict indicates the entity already exists
-                    // {
-                    //     // Merge the entity if it already exists
-                    //     await _userDAUTableClient.UpdateEntityAsync(userEntity.ToTableEntity(), ETag.All, TableUpdateMode.Merge);
-                    // }
-
-                    // Agent Data
-                    var dailyAgentData = await GetDailyAgentDataForUser(userEntity.UPN, userEntity.ReportDate.ToString("yyyy-MM-dd"));
-
-
-                    // We need to update the  weekly, monthly and alltime tables
-                    await UpdateUserSnapshots(userActivityDictionary, userEntity.UPN, "alltime", userEntity.ReportDate.ToString("yyyy-MM-dd"));
-                    await UpdateAgentSnapshots(dailyAgentData, "alltime", userEntity.UPN, userEntity.ReportDate.ToString("yyyy-MM-dd"));
-
-                    // Update Monthly
-                    var firstOfMonthForSnapshot = GetMonthStartDate(userEntity.ReportDate);
-
-                    await UpdateUserSnapshots(userActivityDictionary, userEntity.UPN, "monthly", firstOfMonthForSnapshot);
-                    await UpdateAgentSnapshots(dailyAgentData, "monthly", userEntity.UPN, firstOfMonthForSnapshot);
-
-                    // Update Weekly - Get our timeFrame
-                    var firstMondayOfWeeklySnapshot = GetWeekStartDate(userEntity.ReportDate);
-
-                    await UpdateUserSnapshots(userActivityDictionary, userEntity.UPN, "weekly", firstMondayOfWeeklySnapshot);
-                    await UpdateAgentSnapshots(dailyAgentData, "weekly", userEntity.UPN, firstMondayOfWeeklySnapshot);
+                    // Encrypt the UPN - this will be queued for processing
+                    var encryptedUPN = encryptionService.Encrypt(userSnap.UserPrincipalName);
+                    encryptedUPNs.Add(encryptedUPN);
 
                 }
                 catch (Exception logEx)
@@ -1550,8 +1502,63 @@ namespace groveale.Services
                 }
             }
 
-            return DAUadded;
+            _logger.LogInformation($"Processed {encryptedUPNs.Count} user snapshots for queuing");
+            return encryptedUPNs;
 
+        }
+
+        public async Task ProcessSingleUserAggregationAsync(string encryptedUPN, string reportDate)
+        {
+            try
+            {
+                _logger.LogInformation($"Processing aggregation for UPN: {encryptedUPN}, ReportDate: {reportDate}");
+
+                // Get the aggregation data for the user from daily audit data
+                var aggregationEntity = await GetDailyAuditDataForUser(encryptedUPN, reportDate);
+
+                // Create a minimal M365CopilotUsage object for conversion
+                var userSnap = new M365CopilotUsage
+                {
+                    UserPrincipalName = encryptedUPN,
+                    ReportRefreshDate = reportDate,
+                    DisplayName = string.Empty, // Not needed for aggregations
+                    LastActivityDate = string.Empty // Not needed for aggregations
+                };
+
+                var userEntity = ConvertToUserActivity(userSnap, aggregationEntity);
+
+                // Convert to usage dictionary
+                var userActivityDictionary = ConvertToUsageDictionary(userEntity);
+
+                // Log the user activityDictionary
+                _logger.LogInformation($"User Activity Dictionary for {userEntity.UPN}: {string.Join(", ", userActivityDictionary.Select(kvp => $"{kvp.Key}: {kvp.Value}"))}");
+
+                // Get agent data
+                var dailyAgentData = await GetDailyAgentDataForUser(userEntity.UPN, userEntity.ReportDate.ToString("yyyy-MM-dd"));
+
+                // Update all time tables
+                await UpdateUserSnapshots(userActivityDictionary, userEntity.UPN, "alltime", userEntity.ReportDate.ToString("yyyy-MM-dd"));
+                await UpdateAgentSnapshots(dailyAgentData, "alltime", userEntity.UPN, userEntity.ReportDate.ToString("yyyy-MM-dd"));
+
+                // Update Monthly
+                var firstOfMonthForSnapshot = GetMonthStartDate(userEntity.ReportDate);
+                await UpdateUserSnapshots(userActivityDictionary, userEntity.UPN, "monthly", firstOfMonthForSnapshot);
+                await UpdateAgentSnapshots(dailyAgentData, "monthly", userEntity.UPN, firstOfMonthForSnapshot);
+
+                // Update Weekly
+                var firstMondayOfWeeklySnapshot = GetWeekStartDate(userEntity.ReportDate);
+                await UpdateUserSnapshots(userActivityDictionary, userEntity.UPN, "weekly", firstMondayOfWeeklySnapshot);
+                await UpdateAgentSnapshots(dailyAgentData, "weekly", userEntity.UPN, firstMondayOfWeeklySnapshot);
+
+                _logger.LogInformation($"Successfully processed aggregation for UPN: {encryptedUPN}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing single user aggregation for UPN: {UPN}, ReportDate: {ReportDate}", encryptedUPN, reportDate);
+                _logger.LogError("Message: {Message}", ex.Message);
+                _logger.LogError("StackTrace: {StackTrace}", ex.StackTrace);
+                throw;
+            }
         }
 
         public async Task<int> ProcessAgentUsageAggregationsAsync(string dateToProcess)

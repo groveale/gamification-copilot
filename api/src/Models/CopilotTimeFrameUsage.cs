@@ -93,6 +93,7 @@ public enum AppType
     CopilotAction,
     WebPlugin,
     Agent,
-    CopilotStudio
+    CopilotStudio,
+    SecurityCopilot
 }
 
