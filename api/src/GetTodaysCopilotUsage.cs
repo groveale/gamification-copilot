@@ -57,13 +57,13 @@ namespace groverale
             _logger.LogInformation($"Usage data: {usageData.Count}");
 
             // Inject test data if no usage data and in test mode
-            if (usageData.Count == 0 && Environment.GetEnvironmentVariable("ENABLE_TEST_DATA") == "true")
+            if (usageData.Count == 0 && (Environment.GetEnvironmentVariable("ENABLE_TEST_DATA")?.ToLower() == "true"))
             {
                 _logger.LogInformation("No usage data found, but test mode enabled. Injecting test data...");
                 var testRefreshDate = DateTime.Now.AddDays(-1).ToString("yyyy-MM-dd");
-                usageData["alexg@groverale.onmicrosoft.com"] = new M365CopilotUsage
+                usageData["alex@groverale.onmicrosoft.com"] = new M365CopilotUsage
                 {
-                    UserPrincipalName = "alexg@groverale.onmicrosoft.com",
+                    UserPrincipalName = "alex@groverale.onmicrosoft.com",
                     ReportRefreshDate = testRefreshDate,
                     LastActivityDate = testRefreshDate
                 };
@@ -114,13 +114,13 @@ namespace groverale
             if (firstUser.UserPrincipalName.Contains("groverale"))
             {
                 _logger.LogInformation("Adding test user to copilot users.");
-                copilotUsers.TryAdd("alexg@groverale.onmicrosoft.com", true);
+                copilotUsers.TryAdd("alex@groverale.onmicrosoft.com", true);
                 // We also need to add to the usage data if not already present
-                if (!usageData.ContainsKey("alexg@groverale.onmicrosoft.com"))
+                if (!usageData.ContainsKey("alex@groverale.onmicrosoft.com"))
                 {
-                    usageData["alexg@groverale.onmicrosoft.com"] = new M365CopilotUsage
+                    usageData["alex@groverale.onmicrosoft.com"] = new M365CopilotUsage
                     {
-                        UserPrincipalName = "alexg@groverale.onmicrosoft.com",
+                        UserPrincipalName = "alex@groverale.onmicrosoft.com",
                         ReportRefreshDate = reportRefreshDate
                     };
                 }

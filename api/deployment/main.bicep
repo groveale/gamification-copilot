@@ -75,6 +75,9 @@ param userObjectId string
 @description('Determines if the email list is exclusive (inclusion list) or not (exclusion list). Default is false (exclusion list).')
 param isEmailListExclusive bool = false
 
+@description('Enable test data mode for debugging. Default is false.')
+param enableTestData bool = false
+
 var storageAccountName = 'store${applicationName}'
 var appServicePlanName = 'asp-${applicationName}'
 var keyVaultName = 'kv-${applicationName}'
@@ -275,6 +278,18 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
         {
           name: 'UserAggregationsQueueName'
           value: queueName
+        }
+        {
+          name: 'StorageAccount__queueServiceUri'
+          value: 'https://${storageAccount.name}.queue.core.windows.net/'
+        }
+        {
+          name: 'StorageAccount__credential'
+          value: 'managedidentity'
+        }
+        {
+          name: 'ENABLE_TEST_DATA'
+          value: string(enableTestData)
         }
       ]
       ftpsState: 'FtpsOnly'

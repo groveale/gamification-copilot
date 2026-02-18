@@ -1,6 +1,5 @@
 using System;
 using System.Text.Json;
-using Azure.Storage.Queues.Models;
 using groveale.Models;
 using groveale.Services;
 using Microsoft.Azure.Functions.Worker;
@@ -20,18 +19,21 @@ public class ProcessUsersAggegations
     }
 
     [Function(nameof(ProcessUsersAggegations))]
-    public async Task Run([QueueTrigger("%UserAggregationsQueueName%", Connection = "AzureWebJobsStorage")] QueueMessage message)
+    public async Task Run([QueueTrigger("%UserAggregationsQueueName%", Connection = "AzureWebJobsStorage")] string message)
     {
+        _logger.LogInformation("=== FUNCTION TRIGGERED ===");
+        _logger.LogInformation("Message Text: {messageText}", message);
+    
         try
         {
-            _logger.LogInformation("Processing user aggregation queue message: {messageId}", message.MessageId);
+            _logger.LogInformation("Processing user aggregation queue message");
 
             // Deserialize the message
-            var userAggregationMessage = JsonSerializer.Deserialize<UserAggregationMessage>(message.MessageText);
+            var userAggregationMessage = JsonSerializer.Deserialize<UserAggregationMessage>(message);
 
             if (userAggregationMessage == null)
             {
-                _logger.LogError("Failed to deserialize queue message: {messageText}", message.MessageText);
+                _logger.LogError("Failed to deserialize queue message: {messageText}", message);
                 return;
             }
 
@@ -43,12 +45,11 @@ public class ProcessUsersAggegations
                 userAggregationMessage.EncryptedUPN, 
                 userAggregationMessage.ReportRefreshDate);
 
-            _logger.LogInformation("Successfully processed user aggregation for message: {messageId}", message.MessageId);
+            _logger.LogInformation("Successfully processed user aggregation");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing user aggregation queue message: {messageId}. Error: {error}", 
-                message.MessageId, ex.Message);
+            _logger.LogError(ex, "Error processing user aggregation queue message. Error: {error}", ex.Message);
             throw; // Re-throw to trigger retry logic
         }
     }
