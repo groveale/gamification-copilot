@@ -14,6 +14,7 @@ namespace groveale.Services
         string ReminderDays { get; }
         bool IsEmailListExclusive { get; }
         string UserAggregationsQueueName { get; }
+        string CopilotEventAggregationsQueueName { get; }
         
     }
 
@@ -36,6 +37,8 @@ namespace groveale.Services
         public bool IsEmailListExclusive => bool.TryParse(Environment.GetEnvironmentVariable("IsEmailListExclusive"), out var result) ? result : false;
 
         public string UserAggregationsQueueName => Environment.GetEnvironmentVariable("UserAggregationsQueueName") ?? "user-aggregations";
+
+        public string CopilotEventAggregationsQueueName => Environment.GetEnvironmentVariable("CopilotEventAggregationsQueueName") ?? "copilot-event-aggregations";
 
     }
 }

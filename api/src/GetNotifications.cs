@@ -1,3 +1,4 @@
+using groveale.Models;
 using groveale.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -15,8 +16,9 @@ namespace groveale
         private readonly IKeyVaultService _keyVaultService;
         private readonly ISettingsService _settingsService;
         private readonly IExclusionEmailService _exclusionEmailService;
+        private readonly IQueueService _queueService;
 
-        public GetNotifications(ILogger<GetNotifications> logger, IM365ActivityService m365ActivityService, IAzureTableService azureTableService, IKeyVaultService keyVaultService, ISettingsService settingsService, IExclusionEmailService exclusionEmailService)
+        public GetNotifications(ILogger<GetNotifications> logger, IM365ActivityService m365ActivityService, IAzureTableService azureTableService, IKeyVaultService keyVaultService, ISettingsService settingsService, IExclusionEmailService exclusionEmailService, IQueueService queueService)
         {
             _logger = logger;
             _m365ActivityService = m365ActivityService;
@@ -24,6 +26,7 @@ namespace groveale
             _keyVaultService = keyVaultService;
             _settingsService = settingsService;
             _exclusionEmailService = exclusionEmailService;
+            _queueService = queueService;
         }
 
         [Function("GetNotifications")]
@@ -69,116 +72,20 @@ namespace groveale
 
                 // Get copilot audit records
                 var copilotAuditRecords = await _m365ActivityService.GetCopilotActivityNotificationsAsync(notifications, encryptionService, exclusionEmails);
-                //var RAWCopilotInteractions = await _m365ActivityService.GetCopilotActivityNotificationsRAWAsync(notifications);
 
-                // store the new lists in the table
-                foreach (var interaction in copilotAuditRecords)
-                {
-                    await _azureTableService.AddCopilotInteractionDetailsAsync(interaction);
-                }
+                // Store interaction details using batch writes
+                await _azureTableService.AddBatchCopilotInteractionDetailsAsync(copilotAuditRecords);
 
-                // store the raw copilot interactions in the table
-                // foreach (var interaction in RAWCopilotInteractions)
-                // {
-                //     await _azureTableService.AddCopilotInteractionRAWAysnc(interaction);
-                // }
+                // Build pre-aggregated messages (single pass) and queue for async processing
+                var aggregationMessages = EventAggregationHelper.BuildAggregationMessages(copilotAuditRecords, _logger);
+                await _queueService.QueueCopilotEventAggregationsAsync(aggregationMessages);
 
+                var uniqueUsers = copilotAuditRecords.Select(r => r.UserId).Distinct().Count();
+                _logger.LogInformation(
+                    "GetNotifications processed: {TotalEvents} events, {UniqueUsers} unique users, {QueueMessages} aggregation messages queued",
+                    copilotAuditRecords.Count, uniqueUsers, aggregationMessages.Count);
 
-                // Group the copilot audit records by user and extract the CopilotEventData
-                var groupedCopilotEventData = copilotAuditRecords
-                    .GroupBy(record => record.UserId)
-                    .ToDictionary(
-                        group => group.Key,
-                        group => group.Select(record => record.CopilotEventData).ToList()
-                    );
-
-                // log the grouped data
-                _logger.LogInformation($"Found data for: {groupedCopilotEventData.Count} users");
-
-
-                // Log or process the grouped data as needed
-                foreach (var userId in groupedCopilotEventData.Keys)
-                {
-                    _logger.LogInformation($"UserId: {userId}");
-
-                    foreach (var copilotEventData in groupedCopilotEventData[userId])
-                    {
-
-                        await _azureTableService.AddSingleCopilotInteractionDailyAggregationForUserAsync(copilotEventData, userId);
-                    }
-
-                    try
-                    {
-                        // Add web plugin interactions to the table (AISystemPlugin == "BingWebSearch")
-                        var webPluginInteractions = groupedCopilotEventData[userId]
-                            .Where(data => data.AISystemPlugin != null && data.AISystemPlugin.Any(plugin => plugin.Name == "BingWebSearch"))
-                            .ToList();
-
-                        // If there are no web plugin interactions, skip this step
-                        if (webPluginInteractions.Count > 0)
-                        {
-                            // Add the web plugin interactions to the table
-                            await _azureTableService.AddSpecificCopilotInteractionDailyAggregationForUserAsync(AppType.WebPlugin, userId, webPluginInteractions.Count());
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError("Error adding web plugin interactions for user {UserId}. Message: {Message}", userId, ex.Message);
-                        _logger.LogError("Stack Trace: {StackTrace}", ex.StackTrace);
-                        _logger.LogError("Inner Exception: {InnerException}", ex.InnerException?.Message);
-                        _logger.LogError("Inner Exception Stack Trace: {InnerExceptionStackTrace}", ex.InnerException?.StackTrace);
-                    }
-
-                    try
-                    {
-                        // Finally add the total copilot interaction for the user to the table
-                        await _azureTableService.AddSpecificCopilotInteractionDailyAggregationForUserAsync(AppType.All, userId, groupedCopilotEventData[userId].Count());
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError("Error adding total copilot interactions for user {UserId}. Message: {Message}", userId, ex.Message);
-                        _logger.LogError("Stack Trace: {StackTrace}", ex.StackTrace);
-                        _logger.LogError("Inner Exception: {InnerException}", ex.InnerException?.Message);
-                        _logger.LogError("Inner Exception Stack Trace: {InnerExceptionStackTrace}", ex.InnerException?.StackTrace);
-                    }
-
-                    try
-                    {
-
-                        // get record for agents
-                        var copilotAuditRecordsToAdd = groupedCopilotEventData[userId]
-                        .Where(record => !string.IsNullOrEmpty(record.AgentId))
-                        .ToList();
-
-                        // group by agentId
-                        var groupedCopilotAgentRecords = copilotAuditRecordsToAdd?
-                            .GroupBy(record => record.AgentId)
-                            .ToDictionary(
-                                group => group.Key,
-                                group => group.Select(record => record.AgentName).ToList()
-                            );
-
-                        // Go through each group and add to the table
-                        foreach (var agentId in groupedCopilotAgentRecords.Keys)
-                        {
-                            var agentName = groupedCopilotAgentRecords[agentId].FirstOrDefault();
-                            var agentInteractions = groupedCopilotAgentRecords[agentId].Count();
-
-                            _logger.LogInformation($"AgentId: {agentId} - AgentName: {agentName} - Interactions: {agentInteractions}");
-
-                            await _azureTableService.AddAgentInteractionsDailyAggregationForUserAsync(agentId, userId, agentInteractions, agentName);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError("Error adding agent interactions for user {UserId}. Message: {Message}", userId, ex.Message);
-                        _logger.LogError("Stack Trace: {StackTrace}", ex.StackTrace);
-                        _logger.LogError("Inner Exception: {InnerException}", ex.InnerException?.Message);
-                        _logger.LogError("Inner Exception Stack Trace: {InnerExceptionStackTrace}", ex.InnerException?.StackTrace);
-                    }
-                }
-
-                return new OkObjectResult(groupedCopilotEventData);
+                return new OkObjectResult(new { Events = copilotAuditRecords.Count, Users = uniqueUsers, Queued = aggregationMessages.Count });
             }
             catch (Exception ex)
             {

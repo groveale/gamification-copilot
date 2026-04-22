@@ -17,8 +17,10 @@ namespace groveale.Services
         Task AddCopilotInteractionDetailsAsync(AuditData entity);
         Task AddCopilotInteractionDailyAggregationForUserAsync(List<CopilotEventData> entity, string userId);
         Task AddSingleCopilotInteractionDailyAggregationForUserAsync(CopilotEventData entity, string userId);
-        Task AddSpecificCopilotInteractionDailyAggregationForUserAsync(AppType appType, string userId, int count);
-        Task AddAgentInteractionsDailyAggregationForUserAsync(string agentId, string userId, int count, string agentName);
+        Task AddSpecificCopilotInteractionDailyAggregationForUserAsync(AppType appType, string userId, int count, string eventDate = null);
+        Task AddAgentInteractionsDailyAggregationForUserAsync(string agentId, string userId, int count, string agentName, string eventDate = null);
+        Task AddBatchCopilotInteractionDetailsAsync(List<AuditData> interactions);
+        Task UpdateDailyTotalInteractionsAsync(string eventDate, int eventCount, int userCount);
         Task LogWebhookTriggerAsync(LogEvent webhookEvent);
         Task<bool> GetWebhookStateAsync();
         Task SetWebhookStateAsync(bool isPaused);
@@ -64,6 +66,7 @@ namespace groveale.Services
         private readonly string _agentInteractionDailyAggregationForUserTable = "AgentInteractionDailyAggregationByUserAndAgentId";
         private readonly string _auditWebhookFunctionTable = "WebhookFunctionState";
         private readonly string _unhandledAppHosts = "UnhandledAppHosts";
+        private readonly string _dailyTotalInteractionsTableName = "DailyTotalInteractions";
         private readonly string _reportRefreshDateTableName = "ReportRefreshRecord";
         private readonly string _userWeeklyTableName = "CopilotUsageWeeklySnapshots";
         private readonly string _agentWeeklyTableName = "AgentUsageWeeklySnapshots";
@@ -91,6 +94,7 @@ namespace groveale.Services
         private readonly TableClient _agentMonthlyByUserTableClient;
         private readonly TableClient _agentAllTimeByUserTableClient;
         private readonly TableClient _userLastUsageTableClient;
+        private readonly TableClient _dailyTotalInteractionsTableClient;
         private readonly string _webhookEventsTable = "WebhookTriggerEvents";
         private readonly ILogger<AzureTableService> _logger;
 
@@ -145,6 +149,9 @@ namespace groveale.Services
 
             _userLastUsageTableClient = _serviceClient.GetTableClient(_userLastUsageTableName);
             _userLastUsageTableClient.CreateIfNotExists();
+
+            _dailyTotalInteractionsTableClient = _serviceClient.GetTableClient(_dailyTotalInteractionsTableName);
+            _dailyTotalInteractionsTableClient.CreateIfNotExists();
 
 
             _daysToCheck = int.TryParse(settingsService.ReminderDays, out var days) ? days : 14;
@@ -533,7 +540,9 @@ namespace groveale.Services
 
                     await AddUnhandledAppHostAsync(entity.AppHost);
 
-                    break;
+                    // Don't write to aggregation table - the event will still be counted
+                    // in AppType.All via AddSpecificCopilotInteractionDailyAggregationForUserAsync
+                    return;
             }
 
 
@@ -585,7 +594,7 @@ namespace groveale.Services
             }
         }
 
-        public async Task AddSpecificCopilotInteractionDailyAggregationForUserAsync(AppType appType, string userId, int count)
+        public async Task AddSpecificCopilotInteractionDailyAggregationForUserAsync(AppType appType, string userId, int count, string eventDate = null)
         {
             var copilotUsage = new CopilotTimeFrameUsage
             {
@@ -594,7 +603,7 @@ namespace groveale.Services
                 App = appType
             };
 
-            var copilotUsageEntity = copilotUsage.ToDailyAggregationTableEntity(DateTime.UtcNow.ToString("yyyy-MM-dd"));
+            var copilotUsageEntity = copilotUsage.ToDailyAggregationTableEntity(eventDate ?? DateTime.UtcNow.ToString("yyyy-MM-dd"));
             // Add the entity to the table
             await CreateOrUpdateCopilotUsageEntityAsync(copilotUsageEntity, copilotUsage.TotalInteractionCount);
         }
@@ -645,7 +654,7 @@ namespace groveale.Services
             }
         }
 
-        public async Task AddAgentInteractionsDailyAggregationForUserAsync(string agentId, string userId, int count, string agentName)
+        public async Task AddAgentInteractionsDailyAggregationForUserAsync(string agentId, string userId, int count, string agentName, string eventDate = null)
         {
             var agentUsage = new AgentInteraction
             {
@@ -655,7 +664,7 @@ namespace groveale.Services
                 AgentName = agentName
             };
 
-            var agentUsageEntity = agentUsage.ToDailyTableEntity(DateTime.UtcNow.ToString("yyyy-MM-dd"));
+            var agentUsageEntity = agentUsage.ToDailyTableEntity(eventDate ?? DateTime.UtcNow.ToString("yyyy-MM-dd"));
 
             try
             {
@@ -697,6 +706,109 @@ namespace groveale.Services
                 _logger.LogError("Message: {Message}", ex.Message);
                 _logger.LogError("Status: {Status}", ex.Status);
                 _logger.LogError("StackTrace: {StackTrace}", ex.StackTrace);
+            }
+        }
+
+        public async Task AddBatchCopilotInteractionDetailsAsync(List<AuditData> interactions)
+        {
+            if (interactions == null || interactions.Count == 0) return;
+
+            // Group by date (partition key) for batch transactions
+            var grouped = interactions.GroupBy(i => DateTime.SpecifyKind(i.CreationTime, DateTimeKind.Utc).ToString("yyyy-MM-dd"));
+
+            foreach (var dateGroup in grouped)
+            {
+                var entities = dateGroup.Select(copilotInteraction =>
+                {
+                    string contextsTypes = copilotInteraction.CopilotEventData.Contexts != null
+                        ? string.Join(", ", copilotInteraction.CopilotEventData.Contexts.Select(context => context.Type))
+                        : string.Empty;
+
+                    string aiPlugin = copilotInteraction.CopilotEventData.AISystemPlugin != null
+                        ? string.Join(", ", copilotInteraction.CopilotEventData.AISystemPlugin.Select(plugin => plugin.Id))
+                        : string.Empty;
+
+                    DateTime eventTime = DateTime.SpecifyKind(copilotInteraction.CreationTime, DateTimeKind.Utc);
+                    return new TableEntity(eventTime.ToString("yyyy-MM-dd"), copilotInteraction.Id.ToString())
+                    {
+                        { "User", copilotInteraction.UserId },
+                        { "AppHost", copilotInteraction.CopilotEventData.AppHost },
+                        { "CreationTime", eventTime },
+                        { "Contexts", contextsTypes },
+                        { "AISystemPlugin", aiPlugin },
+                        { "AgentId", copilotInteraction.CopilotEventData?.AgentId },
+                        { "AgentName", copilotInteraction.CopilotEventData?.AgentName }
+                    };
+                }).ToList();
+
+                // Azure Table batch max is 100 entities per transaction, same partition key
+                foreach (var chunk in entities.Chunk(100))
+                {
+                    try
+                    {
+                        var actions = chunk.Select(e => new TableTransactionAction(TableTransactionActionType.UpsertMerge, e)).ToList();
+                        await copilotInteractionDetailsTableClient.SubmitTransactionAsync(actions);
+                        _logger.LogInformation("Batch upserted {Count} interaction details for date {Date}", chunk.Length, dateGroup.Key);
+                    }
+                    catch (RequestFailedException ex)
+                    {
+                        _logger.LogWarning("Batch write failed for date {Date}, falling back to individual writes. Error: {Message}", dateGroup.Key, ex.Message);
+                        // Fallback to individual writes
+                        foreach (var entity in chunk)
+                        {
+                            try
+                            {
+                                await copilotInteractionDetailsTableClient.UpsertEntityAsync(entity, TableUpdateMode.Merge);
+                            }
+                            catch (RequestFailedException innerEx)
+                            {
+                                _logger.LogError(innerEx, "Error adding interaction detail {RowKey}", entity.RowKey);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        public async Task UpdateDailyTotalInteractionsAsync(string eventDate, int eventCount, int userCount)
+        {
+            try
+            {
+                var retrieveOperation = await _dailyTotalInteractionsTableClient
+                    .GetEntityIfExistsAsync<TableEntity>(eventDate, "global");
+
+                if (retrieveOperation.HasValue)
+                {
+                    var existingEntity = retrieveOperation.Value;
+                    existingEntity["TotalEvents"] = (int)(existingEntity.ContainsKey("TotalEvents") ? existingEntity["TotalEvents"] : 0) + eventCount;
+                    existingEntity["UniqueUsers"] = (int)(existingEntity.ContainsKey("UniqueUsers") ? existingEntity["UniqueUsers"] : 0) + userCount;
+                    existingEntity["LastUpdated"] = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Utc);
+
+                    await _dailyTotalInteractionsTableClient.UpdateEntityAsync(existingEntity, existingEntity.ETag, TableUpdateMode.Merge);
+                }
+                else
+                {
+                    var tableEntity = new TableEntity(eventDate, "global")
+                    {
+                        { "TotalEvents", eventCount },
+                        { "UniqueUsers", userCount },
+                        { "LastUpdated", DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Utc) }
+                    };
+                    await _dailyTotalInteractionsTableClient.AddEntityAsync(tableEntity);
+                }
+            }
+            catch (RequestFailedException ex) when (ex.Status == 409)
+            {
+                var newlyUpdatedEntity = await _dailyTotalInteractionsTableClient
+                    .GetEntityAsync<TableEntity>(eventDate, "global");
+                newlyUpdatedEntity.Value["TotalEvents"] = (int)(newlyUpdatedEntity.Value.ContainsKey("TotalEvents") ? newlyUpdatedEntity.Value["TotalEvents"] : 0) + eventCount;
+                newlyUpdatedEntity.Value["UniqueUsers"] = (int)(newlyUpdatedEntity.Value.ContainsKey("UniqueUsers") ? newlyUpdatedEntity.Value["UniqueUsers"] : 0) + userCount;
+                newlyUpdatedEntity.Value["LastUpdated"] = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Utc);
+                await _dailyTotalInteractionsTableClient.UpdateEntityAsync(newlyUpdatedEntity.Value, newlyUpdatedEntity.Value.ETag, TableUpdateMode.Merge);
+            }
+            catch (RequestFailedException ex)
+            {
+                _logger.LogError(ex, "Error updating daily total interactions for {Date}", eventDate);
             }
         }
 

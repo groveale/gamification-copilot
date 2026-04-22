@@ -16,6 +16,7 @@ param(
     [string]$InactivityDays = 14, # Optional, default is 14 days
     [bool]$IsEmailListExclusive = $false, # Whether the email list is exclusive (inclusion list = $true) or exclusion list ($false)
     [string]$QueueName = "user-aggregations", # Queue name for user aggregations
+    [string]$CopilotEventAggregationsQueueName = "copilot-event-aggregations", # Queue name for copilot event aggregations
     [bool]$EnableTestData = $false # Enable test data mode for debugging
 )
 
@@ -139,6 +140,7 @@ try {
         userObjectId=$UserObjectId `
         isEmailListExclusive=$IsEmailListExclusive `
         queueName=$QueueName `
+        copilotEventAggregationsQueueName=$CopilotEventAggregationsQueueName `
         enableTestData=$EnableTestData `
         --query 'properties.outputs' `
         --output json | ConvertFrom-Json

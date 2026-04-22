@@ -11,6 +11,7 @@ namespace groveale.Services
     public interface IQueueService
     {
         Task QueueUserAggregationsAsync(List<string> encryptedUPNs, string reportRefreshDate);
+        Task QueueCopilotEventAggregationsAsync(List<CopilotEventAggregationMessage> messages);
     }
 
     public class QueueService : IQueueService
@@ -18,6 +19,7 @@ namespace groveale.Services
         private readonly QueueServiceClient _queueServiceClient;
         private readonly ILogger<QueueService> _logger;
         private readonly string _userAggregationQueueName;
+        private readonly string _copilotEventAggregationQueueName;
 
         public QueueService(ISettingsService settingsService, ILogger<QueueService> logger)
         {
@@ -61,6 +63,7 @@ namespace groveale.Services
             }
 
             _userAggregationQueueName = settingsService.UserAggregationsQueueName;
+            _copilotEventAggregationQueueName = settingsService.CopilotEventAggregationsQueueName;
             
             _logger.LogInformation($"QueueServiceClient created successfully. Queue name: {_userAggregationQueueName}");
             _logger.LogInformation($"Queue URI: {_queueServiceClient?.Uri?.ToString() ?? "NULL"}");
@@ -149,6 +152,43 @@ namespace groveale.Services
             {
                 _logger.LogError(ex, "Error queuing user aggregation messages. Error details: {Message}, StackTrace: {StackTrace}", 
                     ex.Message, ex.StackTrace);
+                throw;
+            }
+        }
+
+        public async Task QueueCopilotEventAggregationsAsync(List<CopilotEventAggregationMessage> messages)
+        {
+            try
+            {
+                if (messages == null || messages.Count == 0)
+                {
+                    _logger.LogInformation("No copilot event aggregation messages to queue");
+                    return;
+                }
+
+                _logger.LogInformation("Queuing {Count} copilot event aggregation messages", messages.Count);
+
+                var queueClient = _queueServiceClient.GetQueueClient(_copilotEventAggregationQueueName);
+                await queueClient.CreateIfNotExistsAsync();
+
+                int queuedCount = 0;
+                foreach (var message in messages)
+                {
+                    var messageJson = JsonSerializer.Serialize(message);
+                    await queueClient.SendMessageAsync(messageJson);
+                    queuedCount++;
+
+                    if (queuedCount % 100 == 0)
+                    {
+                        _logger.LogInformation("Queued {Count}/{Total} copilot event aggregation messages...", queuedCount, messages.Count);
+                    }
+                }
+
+                _logger.LogInformation("Successfully queued {Count} copilot event aggregation messages", queuedCount);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error queuing copilot event aggregation messages. Error: {Message}", ex.Message);
                 throw;
             }
         }

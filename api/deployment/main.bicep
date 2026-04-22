@@ -48,6 +48,9 @@ param spoListId string
 @description('Queue name for user aggregations')
 param queueName string = 'user-aggregations'
 
+@description('Queue name for copilot event aggregations')
+param copilotEventAggregationsQueueName string = 'copilot-event-aggregations'
+
 @description('Tags to apply to all resources')
 param tags object = {
   Application: applicationName
@@ -278,6 +281,10 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
         {
           name: 'UserAggregationsQueueName'
           value: queueName
+        }
+        {
+          name: 'CopilotEventAggregationsQueueName'
+          value: copilotEventAggregationsQueueName
         }
         {
           name: 'StorageAccount__queueServiceUri'
