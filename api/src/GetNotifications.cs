@@ -71,7 +71,7 @@ namespace groveale
 
 
                 // Get copilot audit records
-                var copilotAuditRecords = await _m365ActivityService.GetCopilotActivityNotificationsAsync(notifications, encryptionService, exclusionEmails);
+                var (copilotAuditRecords, _) = await _m365ActivityService.GetCopilotActivityNotificationsAsync(notifications, encryptionService, exclusionEmails);
 
                 // Store interaction details using batch writes
                 await _azureTableService.AddBatchCopilotInteractionDetailsAsync(copilotAuditRecords);

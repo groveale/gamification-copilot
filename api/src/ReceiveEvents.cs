@@ -133,11 +133,22 @@ namespace groveale
                 // Just call it - caching happens automatically
                 var exclusionEmails = await _exclusionEmailService.LoadEmailsFromPersonFieldAsync();
 
+                // Parse raw logging users from config (comma-separated UPNs)
+                var rawLoggingUsers = string.IsNullOrEmpty(_settingsService.RawLoggingUsers)
+                    ? null
+                    : new HashSet<string>(_settingsService.RawLoggingUsers.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), StringComparer.OrdinalIgnoreCase);
+
                 // Get copilot audit records
-                var copilotAuditRecords = await _m365ActivityService.GetCopilotActivityNotificationsAsync(notifications, encryptionService, exclusionEmails);
+                var (copilotAuditRecords, rawDebugEvents) = await _m365ActivityService.GetCopilotActivityNotificationsAsync(notifications, encryptionService, exclusionEmails, rawLoggingUsers);
 
                 // Store interaction details using batch writes (up to 100 per transaction)
                 await _azureTableService.AddBatchCopilotInteractionDetailsAsync(copilotAuditRecords);
+
+                // Write raw debug events for monitored users
+                if (rawDebugEvents.Count > 0)
+                {
+                    await _azureTableService.AddBatchRawInteractionsAsync(rawDebugEvents);
+                }
 
                 // Build pre-aggregated messages (single pass over events) and queue for async processing
                 var aggregationMessages = EventAggregationHelper.BuildAggregationMessages(copilotAuditRecords, _logger);

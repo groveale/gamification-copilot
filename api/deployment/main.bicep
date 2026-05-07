@@ -81,6 +81,9 @@ param isEmailListExclusive bool = false
 @description('Enable test data mode for debugging. Default is false.')
 param enableTestData bool = false
 
+@description('Comma-separated list of UPNs to log raw interactions for. Empty means disabled.')
+param rawLoggingUsers string = ''
+
 var storageAccountName = 'store${applicationName}'
 var appServicePlanName = 'asp-${applicationName}'
 var keyVaultName = 'kv-${applicationName}'
@@ -297,6 +300,10 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
         {
           name: 'ENABLE_TEST_DATA'
           value: string(enableTestData)
+        }
+        {
+          name: 'RawLoggingUsers'
+          value: rawLoggingUsers
         }
       ]
       ftpsState: 'FtpsOnly'

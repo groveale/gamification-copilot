@@ -16,4 +16,5 @@ cd ..
     -IsEmailListExclusive $true `
     -QueueName "user-aggregations" `
     -CopilotEventAggregationsQueueName "copilot-event-aggregations" `
-    -EnableTestData $true
+    -EnableTestData $true `
+    -RawLoggingUsers ""

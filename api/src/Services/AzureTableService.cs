@@ -20,6 +20,7 @@ namespace groveale.Services
         Task AddSpecificCopilotInteractionDailyAggregationForUserAsync(AppType appType, string userId, int count, string eventDate = null);
         Task AddAgentInteractionsDailyAggregationForUserAsync(string agentId, string userId, int count, string agentName, string eventDate = null);
         Task AddBatchCopilotInteractionDetailsAsync(List<AuditData> interactions);
+        Task AddBatchRawInteractionsAsync(List<(string UserId, string RawJson)> rawEvents);
         Task UpdateDailyTotalInteractionsAsync(string eventDate, int eventCount, int userCount);
         Task LogWebhookTriggerAsync(LogEvent webhookEvent);
         Task<bool> GetWebhookStateAsync();
@@ -764,6 +765,47 @@ namespace groveale.Services
                             {
                                 _logger.LogError(innerEx, "Error adding interaction detail {RowKey}", entity.RowKey);
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        public async Task AddBatchRawInteractionsAsync(List<(string UserId, string RawJson)> rawEvents)
+        {
+            if (rawEvents == null || rawEvents.Count == 0) return;
+
+            var tableClient = _serviceClient.GetTableClient(_copilotInteractionTable);
+            tableClient.CreateIfNotExists();
+
+            string partitionKey = DateTime.UtcNow.ToString("yyyy-MM-dd");
+
+            var entities = rawEvents.Select(e => new TableEntity(partitionKey, Guid.NewGuid().ToString())
+            {
+                { "UserId", e.UserId },
+                { "Data", e.RawJson }
+            }).ToList();
+
+            foreach (var chunk in entities.Chunk(100))
+            {
+                try
+                {
+                    var actions = chunk.Select(e => new TableTransactionAction(TableTransactionActionType.UpsertMerge, e)).ToList();
+                    await tableClient.SubmitTransactionAsync(actions);
+                    _logger.LogInformation("Batch wrote {Count} raw debug interactions", chunk.Length);
+                }
+                catch (RequestFailedException ex)
+                {
+                    _logger.LogWarning("Batch raw write failed, falling back to individual writes. Error: {Message}", ex.Message);
+                    foreach (var entity in chunk)
+                    {
+                        try
+                        {
+                            await tableClient.UpsertEntityAsync(entity, TableUpdateMode.Merge);
+                        }
+                        catch (RequestFailedException innerEx)
+                        {
+                            _logger.LogError(innerEx, "Error writing raw interaction {RowKey}", entity.RowKey);
                         }
                     }
                 }

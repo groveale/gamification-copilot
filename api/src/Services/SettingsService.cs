@@ -15,6 +15,7 @@ namespace groveale.Services
         bool IsEmailListExclusive { get; }
         string UserAggregationsQueueName { get; }
         string CopilotEventAggregationsQueueName { get; }
+        string RawLoggingUsers { get; }
         
     }
 
@@ -39,6 +40,8 @@ namespace groveale.Services
         public string UserAggregationsQueueName => Environment.GetEnvironmentVariable("UserAggregationsQueueName") ?? "user-aggregations";
 
         public string CopilotEventAggregationsQueueName => Environment.GetEnvironmentVariable("CopilotEventAggregationsQueueName") ?? "copilot-event-aggregations";
+
+        public string RawLoggingUsers => Environment.GetEnvironmentVariable("RawLoggingUsers") ?? "";
 
     }
 }

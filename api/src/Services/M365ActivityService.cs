@@ -22,7 +22,7 @@ namespace groveale.Services
         Task<string> StopSubscriptionAsync(string configuredContentType);
 
         Task<List<ListAuditObj>> GetListCreatedNotificationsAsync(List<NotificationResponse> notifications);
-        Task<List<AuditData>> GetCopilotActivityNotificationsAsync(List<NotificationResponse> notifications, DeterministicEncryptionService encryptionService, HashSet<string> exclusionEmails = null);
+        Task<(List<AuditData> Interactions, List<(string UserId, string RawJson)> RawDebugEvents)> GetCopilotActivityNotificationsAsync(List<NotificationResponse> notifications, DeterministicEncryptionService encryptionService, HashSet<string> exclusionEmails = null, HashSet<string> rawLoggingUsers = null);
 
         Task<List<dynamic>> GetCopilotActivityNotificationsRAWAsync(List<NotificationResponse> notifications);
 
@@ -204,7 +204,7 @@ namespace groveale.Services
             }
         }
 
-        public async Task<List<AuditData>> GetCopilotActivityNotificationsAsync(List<NotificationResponse> notifications, DeterministicEncryptionService encryptionService, HashSet<string> exclusionEmails = null)
+        public async Task<(List<AuditData> Interactions, List<(string UserId, string RawJson)> RawDebugEvents)> GetCopilotActivityNotificationsAsync(List<NotificationResponse> notifications, DeterministicEncryptionService encryptionService, HashSet<string> exclusionEmails = null, HashSet<string> rawLoggingUsers = null)
         {
             if (string.IsNullOrEmpty(_accessToken))
             {
@@ -213,6 +213,7 @@ namespace groveale.Services
 
             // You will need to change this to match the object you are deserializing
             List<AuditData> copilotInteractions = new List<AuditData>();
+            List<(string UserId, string RawJson)> rawDebugEvents = new();
 
             // Process each notification
             foreach (NotificationResponse notification in notifications)
@@ -241,7 +242,12 @@ namespace groveale.Services
                             // You may also need to create a class to build the operation object
                             if (notificationResponse.Operation == "CopilotInteraction")
                             {
-
+                                // Capture raw JSON for debug users before any filtering
+                                var rawUserId = notificationResponse.UserId.ToString();
+                                if (rawLoggingUsers?.Contains(rawUserId) == true)
+                                {
+                                    rawDebugEvents.Add((rawUserId, notificationResponse.ToString()));
+                                }
 
                                 try
                                 {
@@ -305,8 +311,12 @@ namespace groveale.Services
             // Log the number of notifications processed
             _logger.LogInformation($"Processed {notifications.Count} notifications.");
             _logger.LogInformation($"Found {copilotInteractions.Count} CopilotInteractions.");
+            if (rawDebugEvents.Count > 0)
+            {
+                _logger.LogInformation("Captured {RawCount} raw debug events for logging", rawDebugEvents.Count);
+            }
 
-            return copilotInteractions;
+            return (copilotInteractions, rawDebugEvents);
         }
 
         public async Task<List<dynamic>> GetCopilotActivityNotificationsRAWAsync(List<NotificationResponse> notifications)

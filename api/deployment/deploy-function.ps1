@@ -17,7 +17,8 @@ param(
     [bool]$IsEmailListExclusive = $false, # Whether the email list is exclusive (inclusion list = $true) or exclusion list ($false)
     [string]$QueueName = "user-aggregations", # Queue name for user aggregations
     [string]$CopilotEventAggregationsQueueName = "copilot-event-aggregations", # Queue name for copilot event aggregations
-    [bool]$EnableTestData = $false # Enable test data mode for debugging
+    [bool]$EnableTestData = $false, # Enable test data mode for debugging
+    [string]$RawLoggingUsers = '' # Comma-separated UPNs to log raw interactions for
 )
 
 # Function to write colored output
@@ -142,6 +143,7 @@ try {
         queueName=$QueueName `
         copilotEventAggregationsQueueName=$CopilotEventAggregationsQueueName `
         enableTestData=$EnableTestData `
+        rawLoggingUsers=$RawLoggingUsers `
         --query 'properties.outputs' `
         --output json | ConvertFrom-Json
 
